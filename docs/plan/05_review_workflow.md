@@ -51,22 +51,29 @@ GET /api/cards/{card_id}
 Returns:
 - Card metadata (video, sequence, frame number)
 - Image URL (served as static file)
-- OCR result (raw text, corrected text, confidence, word confidences)
+- OCR result: all structured fields (deceased_name, address, owner, relation, phone, date_of_death, date_of_burial, description, sex, age, grave_type, grave_fee, undertaker, board_of_health_no, svc_no)
+- Raw text and raw_fields_json (original OCR extraction)
+- Confidence score and word confidences
 - Review status
 
 ### Submit Review
 ```
 PUT /api/cards/{card_id}/review
 Body: {
-  "corrected_text": "...",    // optional — if provided, status becomes "corrected"
-  "status": "approved",       // "approved" or "corrected"
-  "reviewed_by": "reviewer1"  // optional reviewer name
+  "fields": {                     // optional — per-field corrections
+    "deceased_name": "AARON, Benjamin L.",
+    "date_of_death": "December 8, 2004",
+    ...                           // only include fields being corrected
+  },
+  "status": "approved",           // "approved" or "corrected"
+  "reviewed_by": "reviewer1"      // optional reviewer name
 }
 ```
 
 Validation:
-- If `corrected_text` is provided, status must be `corrected`
-- If no text changes, status should be `approved`
+- If any `fields` are provided and differ from current values, status must be `corrected`
+- If no field changes, status should be `approved`
+- Only provided fields are updated; omitted fields are left unchanged
 - `reviewed_at` is auto-set to now
 
 ### Batch Review
@@ -78,7 +85,7 @@ Body: {
   "reviewed_by": "reviewer1"
 }
 ```
-For bulk-approving high-confidence cards.
+For bulk-approving high-confidence cards. Does not support per-field corrections (use individual review for that).
 
 ## Review Statistics
 ```

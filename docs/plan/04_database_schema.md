@@ -59,8 +59,8 @@ Define and implement the SQLite database via SQLAlchemy ORM with all tables need
 |--------------------|-------------|------------------|-------------------------------|
 | id                 | VARCHAR(36) | PK               | UUID                          |
 | card_id            | VARCHAR(36) | FK → cards.id, UNIQUE |                          |
-| raw_text           | TEXT        | NOT NULL         | Original Tesseract output     |
-| corrected_text     | TEXT        | nullable         | Reviewer-edited text          |
+| raw_text           | TEXT        | NOT NULL         | Full Tesseract output (preserved for audit) |
+| raw_fields_json    | TEXT        | nullable         | JSON — original OCR-extracted field values before any review edits |
 | confidence_score   | FLOAT       | NOT NULL         | 0.0–1.0                      |
 | word_confidences   | TEXT        | nullable         | JSON array                    |
 | ocr_engine_version | VARCHAR     | nullable         | e.g., "tesseract-5.3.0"      |
@@ -68,6 +68,26 @@ Define and implement the SQLite database via SQLAlchemy ORM with all tables need
 | review_status      | VARCHAR(20) | NOT NULL         | pending/approved/flagged/corrected |
 | reviewed_by        | VARCHAR     | nullable         |                               |
 | reviewed_at        | DATETIME    | nullable         |                               |
+| **— Structured Card Fields —** | | | **Current values (OCR-extracted, then corrected by reviewer)** |
+| deceased_name      | VARCHAR     | nullable         | Top of card, unlabeled — e.g., "AARON, Benjamin L." |
+| address            | VARCHAR     | nullable         | Top of card, unlabeled — street, city, state |
+| owner              | VARCHAR     | nullable         | Lot/estate owner name         |
+| relation           | VARCHAR     | nullable         | Owner's relation to deceased  |
+| phone              | VARCHAR     | nullable         | Ph# — not always present      |
+| date_of_death      | VARCHAR     | nullable         | Often missing on older cards   |
+| date_of_burial     | VARCHAR     | nullable         | Various date formats           |
+| description        | TEXT        | nullable         | Grave location (lot#, range, grave#, section, block, side) |
+| sex                | VARCHAR(10) | nullable         | M or F                        |
+| age                | VARCHAR(10) | nullable         | Numeric, stored as string for OCR fidelity |
+| grave_type         | VARCHAR     | nullable         | e.g., "SVC Vault", "Thrasher OS" |
+| grave_fee          | VARCHAR     | nullable         | Dollar amount as string        |
+| undertaker         | VARCHAR     | nullable         | Funeral home or person name    |
+| board_of_health_no | VARCHAR     | nullable         | Older cards only               |
+| svc_no             | VARCHAR     | nullable         | Service number                 |
+
+**Note on types:** Date and numeric fields are stored as VARCHAR to preserve the original OCR text exactly as extracted. Parsing into proper date/number types happens at the application or export layer, not in the DB. This avoids lossy conversions on varied formats (e.g., "3-20-41" vs "December 8, 2004").
+
+**Note on `raw_fields_json`:** When OCR first populates the structured fields, a snapshot of those values is also stored as JSON in `raw_fields_json`. This preserves the original OCR extraction even after a reviewer corrects fields, providing an audit trail.
 
 ## Indexes
 - `videos.file_hash` — fast duplicate lookup

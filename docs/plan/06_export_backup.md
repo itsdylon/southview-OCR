@@ -19,9 +19,21 @@ Columns:
 - card_id
 - video_filename
 - sequence_index
-- raw_text
-- corrected_text
-- final_text (corrected_text if exists, else raw_text)
+- deceased_name
+- address
+- owner
+- relation
+- phone
+- date_of_death
+- date_of_burial
+- description
+- sex
+- age
+- grave_type
+- grave_fee
+- undertaker
+- board_of_health_no
+- svc_no
 - confidence_score
 - review_status
 - reviewed_by
@@ -31,7 +43,7 @@ Columns:
 ```
 GET /api/export?format=json&video_id=...&status=...
 ```
-Same fields as CSV, structured as JSON array.
+Same fields as CSV, structured as JSON array. Optionally includes `raw_text` and `raw_fields_json` for audit purposes.
 
 ### Export Options
 - Filter by video_id

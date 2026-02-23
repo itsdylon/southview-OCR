@@ -1,13 +1,14 @@
 # Subplan 3: OCR Pipeline
 
 ## Goal
-Extract text from card images with word-level confidence scoring, handling both typed and handwritten text.
+Extract structured field data from card images with word-level confidence scoring. Cards are pre-printed forms filled via typewriter.
 
 ## Scope
 - Image pre-processing for OCR quality
 - Tesseract OCR execution with confidence output
+- **Structured field extraction** — parse OCR output into known card fields
 - Word-level and card-level confidence computation
-- OCRResult record creation
+- OCRResult record creation with both raw text and structured fields
 
 ## Pre-Processing Pipeline
 
@@ -76,12 +77,64 @@ ocr:
     review_threshold: 0.70 # Cards below this are flagged
 ```
 
+## Card Field Structure
+
+These are historical cemetery index cards. They are pre-printed forms filled in via typewriter. The fields are:
+
+| Field | Label on Card | Position | Notes |
+|-------|--------------|----------|-------|
+| deceased_name | *(unlabeled)* | Top line, prominent | Often "LAST, First Middle" format |
+| address | *(unlabeled)* | Same line as name, right side | Street address, city, state |
+| owner | "Owner" | Below header | Lot/estate owner name |
+| relation | "Relation:" | Right of owner | Owner's relation to deceased |
+| phone | "Ph#" | Near owner line | Not always present |
+| date_of_death | "Date of death" | Mid-card | **Often missing** on older cards |
+| date_of_burial | "Date of burial" | Right of date_of_death | Various date formats |
+| description | "Description:" | Below dates | Grave location (lot#, range, grave#, section, block, side) |
+| sex | "Sex" | Below description | M or F |
+| age | "Age" | Right of sex | Numeric |
+| grave_type | "Type of Grave" | Right of age | e.g., "SVC Vault", "Thrasher OS" |
+| grave_fee | "Grave Fee" | Right end of line | Dollar amount |
+| undertaker | "Undertaker" | Below sex/age line | Funeral home/person name |
+| board_of_health_no | "Board of Health No." | Right of undertaker | Older cards only |
+| svc_no | "SVC No." | Bottom of card | Service number |
+
+### Key Characteristics
+- **All text is typewritten** — good for Tesseract accuracy
+- **Positions vary slightly** — typewriter alignment shifts mean text may be offset from expected positions
+- **Many fields are optional** — especially date_of_death, phone, board_of_health_no, grave_fee
+- **Text typed over pre-printed lines** — typewriter sometimes shifted, causing text to overlap form lines
+- **Card eras differ** — older cards (1940s) have fewer fields; newer cards (2000s+) include phone, contact info, date of birth
+- **Handwritten annotations** — some cards have red/blue ink notes added later (lower priority; may produce low-confidence OCR)
+
+## Field Extraction Strategy
+
+### Approach: Full OCR + Label-Based Parsing
+
+Template-based region extraction is unreliable because card positions vary. Instead:
+
+1. **Full-card OCR**: Run Tesseract on the entire card image → get all words with bounding boxes and confidences
+2. **Label detection**: Scan OCR output for known label keywords ("Owner", "Relation:", "Date of death", "Date of burial", "Description:", "Sex", "Age", "Type of Grave", "Grave Fee", "Undertaker", "Board of Health No.", "SVC No.")
+3. **Value association**: For each detected label, extract the text that follows it on the same line or nearby region
+4. **Header extraction**: The top of the card is special — no labels. The deceased name is the first/prominent text, and the address follows to the right
+5. **Store results**: Populate structured fields in `OCRResult`; preserve originals in `raw_fields_json`
+
+### Parsing Rules
+- **Name**: First line of text, typically in "LAST, First" format. May be underlined on the form.
+- **Address**: Text to the right of the name on the top line(s), typically a street + city + state
+- **Label → Value**: For labeled fields, the value is the text on the same line following the label (or between this label and the next)
+- **Missing fields**: If a label is found but no typed text follows, the field is stored as null
+- **Dates**: Accept multiple formats (e.g., "December 8, 2004", "3-20-41", "12/8/04")
+
+### Fallback
+If label detection fails or produces poor results, the full `raw_text` is always preserved. The reviewer can manually populate fields during review.
+
 ## Typed vs Handwritten
 
-Tesseract with LSTM (oem 1) handles typed text well. Handwritten text will:
+The primary content is typewritten and Tesseract handles it well. Handwritten annotations (often in red/blue ink) will:
 - Generally produce lower confidence scores
 - Naturally get flagged for review via the confidence threshold
-- No special mode needed — the confidence system handles this gracefully
+- Are lower priority — the typed fields are the core data
 
 If handwritten accuracy is too low, a future enhancement could add a specialized handwriting model (e.g., TrOCR), but Tesseract is the pragmatic starting point.
 
@@ -92,6 +145,9 @@ preprocess_image(image: np.ndarray) -> np.ndarray
 run_tesseract(image: np.ndarray) -> TesseractOutput
 compute_confidence(word_data: list[dict]) -> float
 extract_word_confidences(tesseract_data: pd.DataFrame) -> list[dict]
+parse_card_fields(word_data: list[dict]) -> dict[str, str | None]
+extract_header(word_data: list[dict]) -> tuple[str, str]  # (name, address)
+find_label_value(label: str, word_data: list[dict]) -> str | None
 ```
 
 ## Batch Processing
@@ -103,6 +159,7 @@ extract_word_confidences(tesseract_data: pd.DataFrame) -> list[dict]
 - Tesseract crash on a single card → log error, mark card as failed, continue batch
 - Empty OCR result (no text found) → store empty result, confidence = 0.0, flag for review
 - Image too small/corrupt → skip with error, flag for review
+- Field parsing failure → store raw_text, leave structured fields null, flag for review
 
 ## Files to Create
 - `src/southview/ocr/processor.py` — main OCR orchestrator

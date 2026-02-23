@@ -35,13 +35,13 @@ A pipeline to digitize historical index cards from iPhone video into structured,
 
 ### Why SQLite?
 
-This is a single-user, single-machine project. SQLite gives us:
+SQLite gives us:
 - A single file database that can be copied/backed up trivially
 - No server process to manage
 - Easy export (the file IS the backup)
 - Sufficient write throughput for our batch workload
 
-If we ever need multi-user concurrent writes, migrating to PostgreSQL via SQLAlchemy is straightforward.
+**Multi-developer note:** Each developer runs their own local SQLite instance. The `data/` directory is gitignored — only the schema code (SQLAlchemy models) is shared via the repo. Every developer gets a fresh DB on first run via `init_db()`. There is no need for database consistency across developers since the data (videos, OCR results) is local and fully re-processable. For testing, each developer simply processes their own test videos. If we ever need a shared database or true concurrent writes, migrating to PostgreSQL via SQLAlchemy is straightforward.
 
 ## 3. Data Model (Core Entities)
 
@@ -77,15 +77,32 @@ Card
 OCRResult
   ├── id (UUID)
   ├── card_id (FK → Card)
-  ├── raw_text
-  ├── corrected_text (nullable — filled by reviewer)
+  ├── raw_text (full Tesseract output, preserved for audit)
+  ├── raw_fields_json (JSON — original OCR-extracted field values before review)
   ├── confidence_score (0.0–1.0, card-level)
   ├── word_confidences (JSON — per-word confidence array)
   ├── ocr_engine_version
   ├── processed_at
   ├── review_status (pending | approved | flagged | corrected)
   ├── reviewed_by (nullable)
-  └── reviewed_at (nullable)
+  ├── reviewed_at (nullable)
+  │
+  │── Structured Card Fields (current values — OCR-extracted, then corrected by reviewer)
+  ├── deceased_name          (top of card, unlabeled — e.g., "AARON, Benjamin L.")
+  ├── address                (top of card, unlabeled — e.g., "5566 Marbut Road, Lithonia, GA")
+  ├── owner                  (lot/estate owner name)
+  ├── relation               (owner's relation to deceased)
+  ├── phone                  (Ph# — nullable, not always present)
+  ├── date_of_death          (nullable — many cards missing this)
+  ├── date_of_burial
+  ├── description            (grave location: lot#, range, grave#, section, block, side)
+  ├── sex
+  ├── age
+  ├── grave_type             (type of grave — e.g., "SVC Vault")
+  ├── grave_fee              (e.g., "$675.00")
+  ├── undertaker
+  ├── board_of_health_no     (older cards)
+  └── svc_no
 ```
 
 ## 4. Pipeline Stages
@@ -110,15 +127,18 @@ OCRResult
 - Pre-process (deskew, contrast enhancement, noise reduction)
 - Run Tesseract with confidence output (`--oem 1 --psm 6`)
 - Extract word-level bounding boxes and confidences
+- **Parse structured fields** by detecting known label positions ("Owner", "Date of death", etc.) and extracting associated text
+- Handle unlabeled header: deceased name and address extracted from the top of the card by position
 - Compute card-level confidence score (mean of word confidences)
-- Store `OCRResult` records
+- Store `OCRResult` records with both raw text and structured fields
+- Preserve original OCR-extracted values in `raw_fields_json` for audit
 - Flag cards below confidence threshold (default: 0.7) as `flagged`
 
 ### Stage 4: Review Workflow
 - Frontend displays cards grouped by video/batch
 - Flagged cards highlighted for priority review
-- Reviewer sees: original image + extracted text + confidence
-- Reviewer edits text → stored as `corrected_text`
+- Reviewer sees: original card image alongside extracted structured fields (name, dates, description, etc.)
+- Reviewer corrects individual fields; originals preserved in `raw_fields_json`
 - Reviewer marks card as `approved` or `corrected`
 
 ### Stage 5: Export & Backup
