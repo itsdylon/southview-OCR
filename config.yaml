@@ -1,0 +1,42 @@
+# Southview OCR Configuration
+
+database:
+  path: data/southview.db
+
+storage:
+  videos_dir: data/videos
+  frames_dir: data/frames
+  backups_dir: data/backups
+  exports_dir: data/exports
+
+frame_extraction:
+  sample_rate: 3                # Process every Nth frame
+  transition_threshold: 0.4     # Histogram diff threshold for scene change
+  min_stable_frames: 5          # Minimum stable frames to count as a card
+  sharpness_method: laplacian   # Sharpness metric
+
+ocr:
+  engine: tesseract
+  tesseract:
+    oem: 1          # LSTM neural net
+    psm: 6          # Single uniform block of text
+    lang: eng
+  preprocessing:
+    deskew: true
+    clahe_clip_limit: 2.0
+    clahe_grid_size: 8
+    denoise: true
+    denoise_strength: 10
+    binarize: true
+    binarize_method: otsu   # otsu | adaptive
+  confidence:
+    auto_approve: 0.85      # Cards above this are auto-approved
+    review_threshold: 0.70   # Cards below this are flagged
+
+backup:
+  max_backups: 10
+  auto_backup_before_jobs: true
+
+api:
+  host: 0.0.0.0
+  port: 8000
