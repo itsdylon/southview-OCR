@@ -1,88 +1,145 @@
 """Video upload and listing endpoints."""
 
+import shutil
 import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel
 
-from southview.db.engine import get_session
-from southview.db.models import Video
-from southview.ingest.video_upload import upload_video
+from southview.ingest.video_upload import (
+    SUPPORTED_EXTENSIONS,
+    get_video as svc_get_video,
+    list_videos as svc_list_videos,
+    upload_video,
+)
 
 router = APIRouter(tags=["videos"])
 
 
-@router.post("/videos/upload")
+# ---------------------------------------------------------------------------
+# Pydantic response models
+# ---------------------------------------------------------------------------
+
+class VideoUploadResponse(BaseModel):
+    id: str
+    filename: str
+    status: str
+    file_hash: str
+    file_size_bytes: int | None
+    duration_seconds: float | None
+    resolution: str | None
+    fps: float | None
+    frame_count: int | None
+
+
+class VideoListItem(BaseModel):
+    id: str
+    filename: str
+    status: str
+    upload_timestamp: str | None
+    duration_seconds: float | None
+
+
+class VideoDetailResponse(BaseModel):
+    id: str
+    filename: str
+    filepath: str
+    status: str
+    file_hash: str
+    upload_timestamp: str | None
+    duration_seconds: float | None
+    resolution: str | None
+    fps: float | None
+    frame_count: int | None
+    file_size_bytes: int | None
+    card_count: int
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _resolution_str(w: int | None, h: int | None) -> str | None:
+    if w and h:
+        return f"{w}x{h}"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+@router.post("/videos/upload", response_model=VideoUploadResponse)
 async def upload_video_endpoint(file: UploadFile = File(...)):
     """Upload a video file for processing."""
-    with tempfile.NamedTemporaryFile(
-        suffix=Path(file.filename or "video.mp4").suffix, delete=False
-    ) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
+    suffix = Path(file.filename or "video.mp4").suffix.lower()
+    if suffix not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file extension '{suffix}'. "
+            f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
+        )
 
+    tmp_dir = tempfile.mkdtemp()
+    original_name = file.filename or f"upload{suffix}"
+    tmp_path = Path(tmp_dir) / original_name
     try:
+        # Stream the upload in chunks instead of reading entirely into memory
+        with open(tmp_path, "wb") as f_out:
+            shutil.copyfileobj(file.file, f_out)
+
         video = upload_video(tmp_path)
-        return {
-            "id": video.id,
-            "filename": video.filename,
-            "status": video.status,
-            "duration_seconds": video.duration_seconds,
-            "resolution": f"{video.resolution_w}x{video.resolution_h}" if video.resolution_w else None,
-            "fps": video.fps,
-            "frame_count": video.frame_count,
-        }
+        return VideoUploadResponse(
+            id=video.id,
+            filename=video.filename,
+            status=video.status,
+            file_hash=video.file_hash,
+            file_size_bytes=video.file_size_bytes,
+            duration_seconds=video.duration_seconds,
+            resolution=_resolution_str(video.resolution_w, video.resolution_h),
+            fps=video.fps,
+            frame_count=video.frame_count,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-@router.get("/videos")
-def list_videos(status: str | None = None):
+@router.get("/videos", response_model=list[VideoListItem])
+def list_videos_endpoint(status: str | None = None):
     """List all videos, optionally filtered by status."""
-    session = get_session()
-    try:
-        query = session.query(Video)
-        if status:
-            query = query.filter_by(status=status)
-        videos = query.order_by(Video.upload_timestamp.desc()).all()
-        return [
-            {
-                "id": v.id,
-                "filename": v.filename,
-                "status": v.status,
-                "upload_timestamp": v.upload_timestamp.isoformat() if v.upload_timestamp else None,
-                "duration_seconds": v.duration_seconds,
-            }
-            for v in videos
-        ]
-    finally:
-        session.close()
+    videos = svc_list_videos(status)
+    return [
+        VideoListItem(
+            id=v.id,
+            filename=v.filename,
+            status=v.status,
+            upload_timestamp=v.upload_timestamp.isoformat() if v.upload_timestamp else None,
+            duration_seconds=v.duration_seconds,
+        )
+        for v in videos
+    ]
 
 
-@router.get("/videos/{video_id}")
-def get_video(video_id: str):
+@router.get("/videos/{video_id}", response_model=VideoDetailResponse)
+def get_video_endpoint(video_id: str):
     """Get video details."""
-    session = get_session()
-    try:
-        video = session.query(Video).get(video_id)
-        if not video:
-            raise HTTPException(status_code=404, detail="Video not found")
-        card_count = len(video.cards)
-        return {
-            "id": video.id,
-            "filename": video.filename,
-            "filepath": video.filepath,
-            "status": video.status,
-            "upload_timestamp": video.upload_timestamp.isoformat() if video.upload_timestamp else None,
-            "duration_seconds": video.duration_seconds,
-            "resolution": f"{video.resolution_w}x{video.resolution_h}" if video.resolution_w else None,
-            "fps": video.fps,
-            "frame_count": video.frame_count,
-            "file_size_bytes": video.file_size_bytes,
-            "card_count": card_count,
-        }
-    finally:
-        session.close()
+    video = svc_get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return VideoDetailResponse(
+        id=video.id,
+        filename=video.filename,
+        filepath=video.filepath,
+        status=video.status,
+        file_hash=video.file_hash,
+        upload_timestamp=video.upload_timestamp.isoformat() if video.upload_timestamp else None,
+        duration_seconds=video.duration_seconds,
+        resolution=_resolution_str(video.resolution_w, video.resolution_h),
+        fps=video.fps,
+        frame_count=video.frame_count,
+        file_size_bytes=video.file_size_bytes,
+        card_count=len(video.cards),
+    )
