@@ -1,7 +1,6 @@
 import { Link } from 'react-router';
 import { ArrowRight, AlertTriangle, Video as VideoIcon, Cog } from 'lucide-react';
 import { DashboardLayout } from '../layouts/dashboard-layout';
-import { PipelineStepper } from '../components/pipeline-stepper';
 import { StatusChip } from '../components/status-chip';
 import { useMockDb } from '../data/mock-db';
 
@@ -34,16 +33,6 @@ export default function OverviewPage() {
   
   return (
     <DashboardLayout>
-      <PipelineStepper
-        currentStage="review"
-        stats={{
-          upload: videos.filter((v) => v.status === 'uploaded').length,
-          process: stats.videosProcessing,
-          review: stats.cardsFlagged + stats.cardsPending,
-          publish: stats.cardsApprovedCorrected,
-        }}
-      />
-      
       <div className="p-8 max-w-7xl mx-auto">
         {/* Next Best Action Banner */}
         {nextAction && (

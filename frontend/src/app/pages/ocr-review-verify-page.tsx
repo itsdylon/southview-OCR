@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import {
@@ -11,7 +11,6 @@ import {
   Save,
   CheckCircle,
   Flag,
-  Edit3,
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
@@ -32,6 +31,19 @@ export default function OCRReviewVerifyPage() {
   const [rotation, setRotation] = useState(0);
   const [formData, setFormData] = useState<Partial<OCRResult>>(card?.ocrResult || {});
   const [showRawOCR, setShowRawOCR] = useState(false);
+
+  const EDITABLE_FIELDS = [
+    'deceased_name', 'address', 'owner', 'relation', 'phone',
+    'date_of_death', 'date_of_burial', 'description', 'sex', 'age',
+    'grave_type', 'grave_fee', 'undertaker', 'board_of_health_no', 'svc_no',
+  ] as const;
+
+  const hasEdits = useMemo(() => {
+    if (!card?.ocrResult) return false;
+    return EDITABLE_FIELDS.some(
+      (field) => (formData[field] ?? '') !== (card.ocrResult![field] ?? '')
+    );
+  }, [formData, card?.ocrResult]);
 
   // Reset form and viewer state when navigating to a different card
   useEffect(() => {
@@ -94,13 +106,6 @@ export default function OCRReviewVerifyPage() {
     saveFields();
     updateCardStatus(card.id, 'approved');
     toast.success('Card approved', { description: card.ocrResult.deceased_name || 'Unknown' });
-    navigateNext();
-  };
-
-  const handleCorrected = () => {
-    saveFields();
-    updateCardStatus(card.id, 'corrected');
-    toast.success('Marked as corrected', { description: card.ocrResult.deceased_name || 'Unknown' });
     navigateNext();
   };
 
@@ -174,14 +179,7 @@ export default function OCRReviewVerifyPage() {
               className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
             >
               <CheckCircle className="w-4 h-4" />
-              Approve <span className="text-xs opacity-75">(A)</span>
-            </button>
-            <button
-              onClick={handleCorrected}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Edit3 className="w-4 h-4" />
-              Corrected <span className="text-xs opacity-75">(C)</span>
+              {hasEdits ? 'Save & Approve' : 'Approve'} <span className="text-xs opacity-75">(A)</span>
             </button>
             <button
               onClick={handleFlag}
@@ -390,7 +388,6 @@ export default function OCRReviewVerifyPage() {
                 <p className="text-xs font-semibold text-gray-700 mb-2">Keyboard Shortcuts</p>
                 <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
                   <div><kbd className="px-1 py-0.5 bg-gray-200 rounded">A</kbd> Approve</div>
-                  <div><kbd className="px-1 py-0.5 bg-gray-200 rounded">C</kbd> Mark Corrected</div>
                   <div><kbd className="px-1 py-0.5 bg-gray-200 rounded">F</kbd> Flag</div>
                   <div><kbd className="px-1 py-0.5 bg-gray-200 rounded">S</kbd> Save</div>
                   <div><kbd className="px-1 py-0.5 bg-gray-200 rounded">J</kbd> Previous</div>

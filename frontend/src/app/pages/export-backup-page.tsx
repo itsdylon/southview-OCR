@@ -9,11 +9,11 @@ function generateExportData(allCards: CardWithOCR[], statusFilter: string) {
   let cards = allCards.filter((c) => c.ocrResult);
   if (statusFilter === 'approved') {
     cards = cards.filter((c) => c.ocrResult?.reviewStatus === 'approved');
-  } else if (statusFilter === 'corrected') {
-    cards = cards.filter((c) => c.ocrResult?.reviewStatus === 'corrected');
-  } else if (statusFilter === 'approved-corrected') {
+  } else if (statusFilter === 'flagged') {
+    cards = cards.filter((c) => c.ocrResult?.reviewStatus === 'flagged');
+  } else if (statusFilter === 'approved-flagged') {
     cards = cards.filter(
-      (c) => c.ocrResult?.reviewStatus === 'approved' || c.ocrResult?.reviewStatus === 'corrected'
+      (c) => c.ocrResult?.reviewStatus === 'approved' || c.ocrResult?.reviewStatus === 'flagged'
     );
   }
   return cards;
@@ -119,8 +119,8 @@ export default function ExportBackupPage() {
                   >
                     <option value="all">All Statuses</option>
                     <option value="approved">Approved Only</option>
-                    <option value="corrected">Corrected Only</option>
-                    <option value="approved-corrected">Approved + Corrected</option>
+                    <option value="approved-flagged">Approved and Flagged</option>
+                    <option value="flagged">Flagged Only</option>
                   </select>
                 </div>
 

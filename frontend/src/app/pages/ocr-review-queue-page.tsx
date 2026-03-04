@@ -16,7 +16,6 @@ const STATUS_FILTER_OPTIONS: { value: StatusFilterValue; label: string }[] = [
   { value: 'flagged', label: 'Flagged' },
   { value: 'pending', label: 'Pending Review' },
   { value: 'approved', label: 'Approved' },
-  { value: 'corrected', label: 'Corrected' },
 ];
 
 function isValidStatusFilter(value: string): value is StatusFilterValue {

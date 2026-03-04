@@ -1,14 +1,11 @@
-import { useState } from 'react';
 import { Link } from 'react-router';
 import { Upload, Play } from 'lucide-react';
 import { DashboardLayout } from '../layouts/dashboard-layout';
 import { StatusChip } from '../components/status-chip';
-import { UploadVideoDialog } from '../components/upload-video-dialog';
 import { useVideos } from '../data/mock-db';
 
 export default function VideosPage() {
   const videos = useVideos();
-  const [uploadOpen, setUploadOpen] = useState(false);
   return (
     <DashboardLayout>
       <div className="p-8 max-w-7xl mx-auto">
@@ -19,16 +16,14 @@ export default function VideosPage() {
               Manage uploaded videos and start processing pipelines
             </p>
           </div>
-          <button
-            onClick={() => setUploadOpen(true)}
+          <Link
+            to="/upload"
             className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold"
           >
             <Upload className="w-5 h-5" />
             Upload Video
-          </button>
+          </Link>
         </div>
-
-        <UploadVideoDialog open={uploadOpen} onOpenChange={setUploadOpen} />
         
         {/* Videos Table */}
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
