@@ -18,19 +18,19 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def startup():
-        init_db()
-        # Mount static files for serving card images
         config = get_config()
+        init_db(config["database"]["path"])
         frames_dir = Path(config["storage"]["frames_dir"])
         frames_dir.mkdir(parents=True, exist_ok=True)
         app.mount("/static/frames", StaticFiles(directory=str(frames_dir)), name="frames")
 
     # Import and include routers
-    from southview.api.routes import backup, cards, export, jobs, videos
+    from southview.api.routes import backup, cards, export, jobs, videos, stats
     app.include_router(videos.router, prefix="/api")
     app.include_router(jobs.router, prefix="/api")
     app.include_router(cards.router, prefix="/api")
     app.include_router(export.router, prefix="/api")
     app.include_router(backup.router, prefix="/api")
+    app.include_router(stats.router, prefix="/api")
 
     return app
