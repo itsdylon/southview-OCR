@@ -86,6 +86,7 @@ class Card(Base):
         "OCRResult", back_populates="card", cascade="all, delete-orphan", uselist=False
     )
 
+ 
 
 class OCRResult(Base):
     __tablename__ = "ocr_results"
