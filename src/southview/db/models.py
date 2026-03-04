@@ -108,6 +108,26 @@ class OCRResult(Base):
     reviewed_by = Column(String, nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
 
+    # Original OCR-extracted field values before any review edits (audit trail)
+    raw_fields_json = Column(Text, nullable=True)
+
+    # Structured card fields (current values — OCR-extracted, then corrected by reviewer)
+    deceased_name = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    owner = Column(String, nullable=True)
+    relation = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    date_of_death = Column(String, nullable=True)
+    date_of_burial = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    sex = Column(String(10), nullable=True)
+    age = Column(String(10), nullable=True)
+    grave_type = Column(String, nullable=True)
+    grave_fee = Column(String, nullable=True)
+    undertaker = Column(String, nullable=True)
+    board_of_health_no = Column(String, nullable=True)
+    svc_no = Column(String, nullable=True)
+
     card = relationship("Card", back_populates="ocr_result")
 
     __table_args__ = (
