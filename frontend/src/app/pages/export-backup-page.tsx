@@ -1,84 +1,75 @@
-import { useState } from 'react';
-import { FileDown, Download, Database, CheckCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { FileDown, Download, Database, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { DashboardLayout } from '../layouts/dashboard-layout';
-import { useCardStore } from '../data/mock-db';
-import type { CardWithOCR } from '../types/ocr';
+import * as api from '../data/api';
 
-function generateExportData(allCards: CardWithOCR[], statusFilter: string) {
-  let cards = allCards.filter((c) => c.ocrResult);
-  if (statusFilter === 'approved') {
-    cards = cards.filter((c) => c.ocrResult?.reviewStatus === 'approved');
-  } else if (statusFilter === 'flagged') {
-    cards = cards.filter((c) => c.ocrResult?.reviewStatus === 'flagged');
-  } else if (statusFilter === 'approved-flagged') {
-    cards = cards.filter(
-      (c) => c.ocrResult?.reviewStatus === 'approved' || c.ocrResult?.reviewStatus === 'flagged'
-    );
-  }
-  return cards;
+function formatBytes(bytes: number): string {
+  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)} KB`;
+  return `${bytes} B`;
 }
 
-function downloadCSV(cards: CardWithOCR[]) {
-  const headers = [
-    'Deceased Name','Address','Owner','Relation','Phone',
-    'Date of Death','Date of Burial','Description','Sex','Age',
-    'Grave Type','Grave Fee','Undertaker','Board of Health No','SVC No',
-    'Confidence','Review Status',
-  ];
-  const rows = cards.map((c) => {
-    const r = c.ocrResult!;
-    return [
-      r.deceased_name, r.address, r.owner, r.relation, r.phone,
-      r.date_of_death, r.date_of_burial, r.description, r.sex, r.age,
-      r.grave_type, r.grave_fee, r.undertaker, r.board_of_health_no, r.svc_no,
-      r.confidenceScore, r.reviewStatus,
-    ].map((v) => `"${(v ?? '').toString().replace(/"/g, '""')}"`).join(',');
-  });
-  const csv = [headers.join(','), ...rows].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `southview_export_${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function downloadJSON(cards: CardWithOCR[]) {
-  const data = cards.map((c) => ({ ...c.ocrResult, cardId: c.id, frameNumber: c.frameNumber }));
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `southview_export_${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+interface BackupEntry {
+  filename: string;
+  created_at: string;
+  size_bytes: number;
 }
 
 export default function ExportBackupPage() {
-  const { cards } = useCardStore();
   const [exportFormat, setExportFormat] = useState<'csv' | 'json'>('csv');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [exporting, setExporting] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backups, setBackups] = useState<BackupEntry[]>([]);
+  const [backupsLoading, setBackupsLoading] = useState(true);
 
-  const handleExport = () => {
-    const filtered = generateExportData(cards, statusFilter);
-    if (filtered.length === 0) {
-      toast.error('No records match the selected filters');
-      return;
+  // Fetch backups on mount
+  useEffect(() => {
+    api.fetchBackups()
+      .then((data) => {
+        setBackups(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        // Backups endpoint may not exist yet; ignore
+        setBackups([]);
+      })
+      .finally(() => setBackupsLoading(false));
+  }, []);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const mappedStatus = statusFilter === 'approved-corrected' ? undefined : statusFilter === 'all' ? undefined : statusFilter;
+      const blob = await api.downloadExport(exportFormat, undefined, mappedStatus);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `southview_export_${new Date().toISOString().slice(0, 10)}.${exportFormat}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Export downloaded as ${exportFormat.toUpperCase()}`);
+    } catch (e: any) {
+      toast.error(e.message ?? 'Export failed');
+    } finally {
+      setExporting(false);
     }
-    if (exportFormat === 'csv') {
-      downloadCSV(filtered);
-    } else {
-      downloadJSON(filtered);
-    }
-    toast.success(`Exported ${filtered.length} records as ${exportFormat.toUpperCase()}`);
   };
 
-  const handleBackup = () => {
-    toast.success('Backup triggered', {
-      description: 'Database will be backed up to configured location.',
-    });
+  const handleBackup = async () => {
+    setBackingUp(true);
+    try {
+      await api.triggerBackup();
+      toast.success('Backup created successfully');
+      // Refresh backup list
+      const data = await api.fetchBackups();
+      setBackups(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      toast.error(e.message ?? 'Backup failed');
+    } finally {
+      setBackingUp(false);
+    }
   };
 
   return (
@@ -154,10 +145,15 @@ export default function ExportBackupPage() {
 
                 <button
                   onClick={handleExport}
-                  className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-semibold"
+                  disabled={exporting}
+                  className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-semibold disabled:opacity-50"
                 >
-                  <Download className="w-5 h-5" />
-                  Download Export
+                  {exporting ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Download className="w-5 h-5" />
+                  )}
+                  {exporting ? 'Exporting...' : 'Download Export'}
                 </button>
               </div>
             </div>
@@ -181,10 +177,15 @@ export default function ExportBackupPage() {
 
                 <button
                   onClick={handleBackup}
-                  className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-semibold"
+                  disabled={backingUp}
+                  className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-semibold disabled:opacity-50"
                 >
-                  <Database className="w-5 h-5" />
-                  Trigger Backup Now
+                  {backingUp ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Database className="w-5 h-5" />
+                  )}
+                  {backingUp ? 'Creating Backup...' : 'Trigger Backup Now'}
                 </button>
               </div>
             </div>
@@ -199,88 +200,47 @@ export default function ExportBackupPage() {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-600 uppercase">Timestamp</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-600 uppercase">Type</th>
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-600 uppercase">Filename</th>
                   <th className="text-right px-6 py-3 text-xs font-semibold text-gray-600 uppercase">Size</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-600 uppercase">Status</th>
-                  <th className="text-right px-6 py-3 text-xs font-semibold text-gray-600 uppercase">Action</th>
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    2025-02-20 16:45:00
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-sm text-gray-900">Full Database</span>
-                  </td>
-                  <td className="px-6 py-4 text-right text-sm text-gray-900 font-medium">
-                    124 MB
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                      <span className="text-sm text-green-600">Success</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <a
-                      href="#"
-                      className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-                    >
-                      Download
-                    </a>
-                  </td>
-                </tr>
-                <tr className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    2025-02-19 10:30:00
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-sm text-gray-900">Full Database</span>
-                  </td>
-                  <td className="px-6 py-4 text-right text-sm text-gray-900 font-medium">
-                    118 MB
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                      <span className="text-sm text-green-600">Success</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <a
-                      href="#"
-                      className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-                    >
-                      Download
-                    </a>
-                  </td>
-                </tr>
-                <tr className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    2025-02-18 14:15:00
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-sm text-gray-900">Full Database</span>
-                  </td>
-                  <td className="px-6 py-4 text-right text-sm text-gray-900 font-medium">
-                    115 MB
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                      <span className="text-sm text-green-600">Success</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <a
-                      href="#"
-                      className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-                    >
-                      Download
-                    </a>
-                  </td>
-                </tr>
+                {backupsLoading ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-8 text-center text-sm text-gray-500">
+                      <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
+                      Loading backups...
+                    </td>
+                  </tr>
+                ) : backups.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-8 text-center text-sm text-gray-500">
+                      <AlertCircle className="w-5 h-5 mx-auto mb-2 text-gray-400" />
+                      No backups found. Trigger one above.
+                    </td>
+                  </tr>
+                ) : (
+                  backups.map((b, i) => (
+                    <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="px-6 py-4 text-sm text-gray-600">
+                        {b.created_at ? new Date(b.created_at).toLocaleString() : 'Unknown'}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm text-gray-900">{b.filename}</span>
+                      </td>
+                      <td className="px-6 py-4 text-right text-sm text-gray-900 font-medium">
+                        {formatBytes(b.size_bytes)}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="w-4 h-4 text-green-600" />
+                          <span className="text-sm text-green-600">Success</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

@@ -1,5 +1,6 @@
 """Main frame extraction orchestrator."""
 
+import logging
 from pathlib import Path
 
 import cv2
@@ -8,6 +9,8 @@ import numpy as np
 from southview.config import get_config
 from southview.extraction.scene_detect import detect_transitions
 from southview.extraction.sharpness import compute_sharpness
+
+logger = logging.getLogger(__name__)
 
 
 def extract_frames(
@@ -43,6 +46,7 @@ def extract_frames(
     ]
 
     min_stable = config["frame_extraction"]["min_stable_frames"]
+    blank_threshold = config["frame_extraction"].get("blank_threshold", 50.0)
     results = []
 
     for seq_idx, (start, end) in enumerate(segments):
@@ -51,6 +55,15 @@ def extract_frames(
 
         best_frame, best_frame_num = _find_best_frame(cap, start, end)
         if best_frame is None:
+            continue
+
+        # Skip blank/empty frames (e.g. empty hopper)
+        sharpness = compute_sharpness(best_frame)
+        if sharpness < blank_threshold:
+            logger.info(
+                f"Skipping segment {seq_idx + 1} (frame {best_frame_num}): "
+                f"below blank threshold ({sharpness:.1f} < {blank_threshold})"
+            )
             continue
 
         filename = f"card_{seq_idx + 1:04d}.png"

@@ -32,17 +32,20 @@ export default function OCRReviewVerifyPage() {
   const [formData, setFormData] = useState<Partial<OCRResult>>(card?.ocrResult || {});
   const [showRawOCR, setShowRawOCR] = useState(false);
 
-  const EDITABLE_FIELDS = [
+  const editableFields: (keyof OCRResult)[] = [
     'deceased_name', 'address', 'owner', 'relation', 'phone',
-    'date_of_death', 'date_of_burial', 'description', 'sex', 'age',
-    'grave_type', 'grave_fee', 'undertaker', 'board_of_health_no', 'svc_no',
-  ] as const;
+    'date_of_death', 'date_of_burial', 'description',
+    'sex', 'age', 'grave_type', 'grave_fee', 'undertaker',
+    'board_of_health_no', 'svc_no',
+  ];
 
   const hasEdits = useMemo(() => {
     if (!card?.ocrResult) return false;
-    return EDITABLE_FIELDS.some(
-      (field) => (formData[field] ?? '') !== (card.ocrResult![field] ?? '')
-    );
+    return editableFields.some((f) => {
+      const original = card.ocrResult![f] ?? '';
+      const current = formData[f] ?? '';
+      return original !== current;
+    });
   }, [formData, card?.ocrResult]);
 
   // Reset form and viewer state when navigating to a different card
@@ -104,8 +107,11 @@ export default function OCRReviewVerifyPage() {
 
   const handleApprove = () => {
     saveFields();
-    updateCardStatus(card.id, 'approved');
-    toast.success('Card approved', { description: card.ocrResult.deceased_name || 'Unknown' });
+    const status = hasEdits ? 'corrected' : 'approved';
+    updateCardStatus(card.id, status);
+    toast.success(hasEdits ? 'Corrections saved & approved' : 'Card approved', {
+      description: card.ocrResult.deceased_name || 'Unknown',
+    });
     navigateNext();
   };
 

@@ -10,6 +10,12 @@ from southview.config import get_config
 from southview.db.engine import get_session
 from southview.db.models import Card, OCRResult
 
+ALLOWED_STRUCTURED_FIELDS = {
+    "deceased_name", "address", "owner", "relation", "phone",
+    "date_of_death", "date_of_burial", "description", "sex", "age",
+    "grave_type", "grave_fee", "undertaker", "board_of_health_no", "svc_no",
+}
+
 
 def _parse_status_in(status_in: str | None) -> list[str] | None:
     if not status_in:
@@ -152,6 +158,7 @@ def submit_review(
     fields: dict[str, Any] | None,
     status: str,
     reviewed_by: str | None = None,
+    structured_fields: dict | None = None,
 ) -> dict[str, Any]:
     """
     Only allow:
@@ -163,6 +170,7 @@ def submit_review(
         raise ValueError("status must be 'approved' or 'corrected'")
 
     fields = fields or {}
+
 
     session = get_session()
     try:
@@ -185,6 +193,13 @@ def submit_review(
         r.review_status = status
         r.reviewed_by = reviewed_by
         r.reviewed_at = datetime.utcnow()
+
+        # Apply structured field updates
+        if structured_fields:
+            for key, value in structured_fields.items():
+                if key in ALLOWED_STRUCTURED_FIELDS:
+                    setattr(r, key, value)
+
 
         session.commit()
 

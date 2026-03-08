@@ -39,6 +39,9 @@ class VideoListItem(BaseModel):
     status: str
     upload_timestamp: str | None
     duration_seconds: float | None
+    file_size_bytes: int | None
+    frame_count: int | None
+    card_count: int
 
 
 class VideoDetailResponse(BaseModel):
@@ -110,17 +113,36 @@ async def upload_video_endpoint(file: UploadFile = File(...)):
 @router.get("/videos", response_model=list[VideoListItem])
 def list_videos_endpoint(status: str | None = None):
     """List all videos, optionally filtered by status."""
-    videos = svc_list_videos(status)
-    return [
-        VideoListItem(
-            id=v.id,
-            filename=v.filename,
-            status=v.status,
-            upload_timestamp=v.upload_timestamp.isoformat() if v.upload_timestamp else None,
-            duration_seconds=v.duration_seconds,
+    from southview.db.engine import get_session
+    from southview.db.models import Video
+    from sqlalchemy.orm import selectinload
+    from sqlalchemy import select, func
+
+    session = get_session()
+    try:
+        stmt = (
+            select(Video)
+            .options(selectinload(Video.cards))
+            .order_by(Video.upload_timestamp.desc())
         )
-        for v in videos
-    ]
+        if status is not None:
+            stmt = stmt.filter_by(status=status)
+        videos = list(session.execute(stmt).scalars().all())
+        return [
+            VideoListItem(
+                id=v.id,
+                filename=v.filename,
+                status=v.status,
+                upload_timestamp=v.upload_timestamp.isoformat() if v.upload_timestamp else None,
+                duration_seconds=v.duration_seconds,
+                file_size_bytes=v.file_size_bytes,
+                frame_count=v.frame_count,
+                card_count=len(v.cards),
+            )
+            for v in videos
+        ]
+    finally:
+        session.close()
 
 
 @router.get("/videos/{video_id}", response_model=VideoDetailResponse)

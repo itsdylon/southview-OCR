@@ -16,6 +16,12 @@ from southview.review.service import (
 
 router = APIRouter(tags=["cards"])
 
+STRUCTURED_FIELDS = [
+    "deceased_name", "address", "owner", "relation", "phone",
+    "date_of_death", "date_of_burial", "description", "sex", "age",
+    "grave_type", "grave_fee", "undertaker", "board_of_health_no", "svc_no",
+]
+
 
 def _image_url(image_path: str) -> str | None:
     # Convert local path under frames_dir to /static/frames/<rel>
@@ -64,6 +70,22 @@ class ReviewRequest(BaseModel):
     fields: dict[str, Any] | None = None
     status: str  # only 'approved' or 'corrected'
     reviewed_by: str | None = None
+    # Structured fields (all optional for per-field updates)
+    deceased_name: str | None = None
+    address: str | None = None
+    owner: str | None = None
+    relation: str | None = None
+    phone: str | None = None
+    date_of_death: str | None = None
+    date_of_burial: str | None = None
+    description: str | None = None
+    sex: str | None = None
+    age: str | None = None
+    grave_type: str | None = None
+    grave_fee: str | None = None
+    undertaker: str | None = None
+    board_of_health_no: str | None = None
+    svc_no: str | None = None
 
 
 class BatchReviewRequest(BaseModel):
@@ -118,12 +140,20 @@ def get_card_detail_endpoint(card_id: str):
 
 @router.put("/cards/{card_id}/review")
 def submit_review_endpoint(card_id: str, body: ReviewRequest):
+    # Collect structured fields that were explicitly set
+    structured_fields = {}
+    for field in STRUCTURED_FIELDS:
+        val = getattr(body, field, None)
+        if val is not None:
+            structured_fields[field] = val
+
     try:
         return svc_submit_review(
             card_id,
             fields=body.fields,
             status=body.status,
             reviewed_by=body.reviewed_by,
+            structured_fields=structured_fields if structured_fields else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
