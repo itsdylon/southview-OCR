@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router';
 import OCROverviewPage from './pages/ocr-overview-page';
 import VideosPage from './pages/videos-page';
+import UploadPage from './pages/upload-page';
 import VideoDetailPage from './pages/video-detail-page';
 import OCRJobsPage from './pages/ocr-jobs-page';
 import OCRReviewQueuePage from './pages/ocr-review-queue-page';
@@ -22,6 +23,10 @@ export const router = createBrowserRouter([
   {
     path: '/videos',
     Component: VideosPage,
+  },
+  {
+    path: '/upload',
+    Component: UploadPage,
   },
   {
     path: '/videos/:id',

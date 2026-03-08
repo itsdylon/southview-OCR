@@ -7,6 +7,12 @@ from sqlalchemy.orm import joinedload
 from southview.db.engine import get_session
 from southview.db.models import Card, OCRResult
 
+ALLOWED_STRUCTURED_FIELDS = {
+    "deceased_name", "address", "owner", "relation", "phone",
+    "date_of_death", "date_of_burial", "description", "sex", "age",
+    "grave_type", "grave_fee", "undertaker", "board_of_health_no", "svc_no",
+}
+
 
 def get_cards_for_review(
     video_id: str | None = None,
@@ -48,6 +54,7 @@ def submit_review(
     corrected_text: str | None = None,
     status: str = "approved",
     reviewed_by: str | None = None,
+    structured_fields: dict | None = None,
 ) -> OCRResult:
     """Submit a review for a card (approve or correct)."""
     session = get_session()
@@ -64,6 +71,13 @@ def submit_review(
 
         ocr.reviewed_by = reviewed_by
         ocr.reviewed_at = datetime.now(timezone.utc)
+
+        # Apply structured field updates
+        if structured_fields:
+            for key, value in structured_fields.items():
+                if key in ALLOWED_STRUCTURED_FIELDS:
+                    setattr(ocr, key, value)
+
         session.commit()
         session.refresh(ocr)
         return ocr

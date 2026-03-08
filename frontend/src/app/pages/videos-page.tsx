@@ -24,7 +24,7 @@ export default function VideosPage() {
             Upload Video
           </Link>
         </div>
-        
+
         {/* Videos Table */}
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <table className="w-full">

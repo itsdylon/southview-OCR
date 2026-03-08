@@ -2,7 +2,6 @@ import { useParams, Link } from 'react-router';
 import { toast } from 'sonner';
 import { ArrowLeft, Play, Eye } from 'lucide-react';
 import { DashboardLayout } from '../layouts/dashboard-layout';
-import { PipelineStepper } from '../components/pipeline-stepper';
 import { StatusChip } from '../components/status-chip';
 import { ConfidenceBadge } from '../components/confidence-badge';
 import { useMockDb } from '../data/mock-db';
@@ -32,16 +31,6 @@ export default function VideoDetailPage() {
   
   return (
     <DashboardLayout>
-      <PipelineStepper
-        currentStage={video.status === 'uploaded' ? 'upload' : video.status === 'processing' ? 'process' : 'review'}
-        stats={{
-          upload: video.status === 'uploaded' ? 1 : 0,
-          process: video.status === 'processing' ? 1 : 0,
-          review: videoCards.filter((c) => c.ocrResult?.reviewStatus === 'pending' || c.ocrResult?.reviewStatus === 'flagged').length,
-          publish: videoCards.filter((c) => c.ocrResult?.reviewStatus === 'approved' || c.ocrResult?.reviewStatus === 'corrected').length,
-        }}
-      />
-      
       <div className="p-8 max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">

@@ -14,6 +14,7 @@ frame_extraction:
   transition_threshold: 0.4     # Histogram diff threshold for scene change
   min_stable_frames: 5          # Minimum stable frames to count as a card
   sharpness_method: laplacian   # Sharpness metric
+  blank_threshold: 50.0         # Minimum Laplacian variance to consider a frame non-blank
 
 ocr:
   engine: tesseract
@@ -34,6 +35,7 @@ ocr:
     review_threshold: 0.70   # Cards below this are flagged
 
 backup:
+  directory: data/backups
   max_backups: 10
   auto_backup_before_jobs: true
 
