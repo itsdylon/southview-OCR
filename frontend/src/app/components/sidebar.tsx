@@ -14,7 +14,6 @@ const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Overview' },
   { path: '/upload', icon: Upload, label: 'Upload' },
   { path: '/videos', icon: Video, label: 'Videos' },
-  { path: '/upload', icon: Upload, label: 'Upload' },
   { path: '/jobs', icon: Cog, label: 'Jobs' },
   { path: '/review-queue', icon: ListChecks, label: 'Review Queue' },
   { path: '/search', icon: Search, label: 'Search' },

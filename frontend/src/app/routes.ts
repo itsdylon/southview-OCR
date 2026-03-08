@@ -7,7 +7,6 @@ import OCRJobsPage from './pages/ocr-jobs-page';
 import OCRReviewQueuePage from './pages/ocr-review-queue-page';
 import OCRReviewVerifyPage from './pages/ocr-review-verify-page';
 import OCRSearchPage from './pages/ocr-search-page';
-import UploadPage from './pages/upload-page';
 import ExportBackupPage from './pages/export-backup-page';
 import OCRSettingsPage from './pages/ocr-settings-page';
 
@@ -23,10 +22,6 @@ export const router = createBrowserRouter([
   {
     path: '/videos',
     Component: VideosPage,
-  },
-  {
-    path: '/upload',
-    Component: UploadPage,
   },
   {
     path: '/videos/:id',
