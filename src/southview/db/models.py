@@ -1,136 +1,120 @@
-"""SQLAlchemy ORM models."""
+# src/southview/db/models.py
+from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import (
-    Column,
-    DateTime,
-    Float,
-    ForeignKey,
-    Index,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
+    String, Integer, Float, DateTime, Text, ForeignKey, UniqueConstraint, Index
 )
-from sqlalchemy.orm import DeclarativeBase, relationship
-
-
-def _generate_uuid() -> str:
-    return str(uuid.uuid4())
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     pass
 
 
+def _uuid() -> str:
+    return str(uuid.uuid4())
+
+
 class Video(Base):
     __tablename__ = "videos"
 
-    id = Column(String(36), primary_key=True, default=_generate_uuid)
-    filename = Column(String, nullable=False)
-    filepath = Column(String, nullable=False)
-    file_hash = Column(String(64), unique=True, nullable=False)
-    status = Column(String(20), nullable=False, default="uploaded")
-    duration_seconds = Column(Float, nullable=True)
-    resolution_w = Column(Integer, nullable=True)
-    resolution_h = Column(Integer, nullable=True)
-    fps = Column(Float, nullable=True)
-    frame_count = Column(Integer, nullable=True)
-    file_size_bytes = Column(Integer, nullable=True)
-    upload_timestamp = Column(DateTime, nullable=False, default=_utcnow)
-    metadata_json = Column(Text, nullable=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    filename: Mapped[str] = mapped_column(String, nullable=False)
+    filepath: Mapped[str] = mapped_column(String, nullable=False)
+    file_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
 
-    jobs = relationship("Job", back_populates="video", cascade="all, delete-orphan")
-    cards = relationship("Card", back_populates="video", cascade="all, delete-orphan")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="uploaded")
+
+    duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    resolution_w: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    resolution_h: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fps: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    frame_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    file_size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    upload_timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    jobs: Mapped[list["Job"]] = relationship("Job", back_populates="video", cascade="all, delete-orphan")
+    cards: Mapped[list["Card"]] = relationship("Card", back_populates="video", cascade="all, delete-orphan")
 
 
 class Job(Base):
     __tablename__ = "jobs"
 
-    id = Column(String(36), primary_key=True, default=_generate_uuid)
-    video_id = Column(String(36), ForeignKey("videos.id"), nullable=False)
-    job_type = Column(String(30), nullable=False)
-    status = Column(String(20), nullable=False, default="queued")
-    progress = Column(Integer, default=0)
-    error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=_utcnow)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    video_id: Mapped[str] = mapped_column(String(36), ForeignKey("videos.id", ondelete="CASCADE"), nullable=False)
 
-    video = relationship("Video", back_populates="jobs")
+    job_type: Mapped[str] = mapped_column(String(30), nullable=False)  # frame_extraction / ocr / full_pipeline
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")  # queued/running/completed/failed
 
-    __table_args__ = (
-        Index("ix_jobs_video_id", "video_id"),
-        Index("ix_jobs_status", "status"),
-    )
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    video: Mapped["Video"] = relationship("Video", back_populates="jobs")
+    cards: Mapped[list["Card"]] = relationship("Card", back_populates="job")
 
 
 class Card(Base):
     __tablename__ = "cards"
-
-    id = Column(String(36), primary_key=True, default=_generate_uuid)
-    video_id = Column(String(36), ForeignKey("videos.id"), nullable=False)
-    job_id = Column(String(36), ForeignKey("jobs.id"), nullable=False)
-    frame_number = Column(Integer, nullable=False)
-    image_path = Column(String, nullable=False)
-    sequence_index = Column(Integer, nullable=False)
-    extracted_at = Column(DateTime, nullable=False, default=_utcnow)
-
-    video = relationship("Video", back_populates="cards")
-    ocr_result = relationship(
-        "OCRResult", back_populates="card", uselist=False, cascade="all, delete-orphan"
-    )
-
     __table_args__ = (
-        UniqueConstraint("video_id", "sequence_index", name="uq_card_video_seq"),
+        UniqueConstraint("video_id", "sequence_index", name="uq_cards_video_sequence"),
         Index("ix_cards_video_id", "video_id"),
     )
 
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+
+    video_id: Mapped[str] = mapped_column(String(36), ForeignKey("videos.id", ondelete="CASCADE"), nullable=False)
+    job_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+
+    frame_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    image_path: Mapped[str] = mapped_column(String, nullable=False)  # path to extracted PNG
+    sequence_index: Mapped[int] = mapped_column(Integer, nullable=False)  # 1..N
+    extracted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    video: Mapped["Video"] = relationship("Video", back_populates="cards")
+    job: Mapped[Optional["Job"]] = relationship("Job", back_populates="cards")
+    ocr_result: Mapped[Optional["OCRResult"]] = relationship(
+        "OCRResult", back_populates="card", cascade="all, delete-orphan", uselist=False
+    )
+
+ 
 
 class OCRResult(Base):
     __tablename__ = "ocr_results"
-
-    id = Column(String(36), primary_key=True, default=_generate_uuid)
-    card_id = Column(String(36), ForeignKey("cards.id"), unique=True, nullable=False)
-    raw_text = Column(Text, nullable=False)
-    corrected_text = Column(Text, nullable=True)
-    confidence_score = Column(Float, nullable=False)
-    word_confidences = Column(Text, nullable=True)  # JSON
-    ocr_engine_version = Column(String, nullable=True)
-    processed_at = Column(DateTime, nullable=False, default=_utcnow)
-    review_status = Column(String(20), nullable=False, default="pending")
-    reviewed_by = Column(String, nullable=True)
-    reviewed_at = Column(DateTime, nullable=True)
-
-    # Original OCR-extracted field values before any review edits (audit trail)
-    raw_fields_json = Column(Text, nullable=True)
-
-    # Structured card fields (current values — OCR-extracted, then corrected by reviewer)
-    deceased_name = Column(String, nullable=True)
-    address = Column(String, nullable=True)
-    owner = Column(String, nullable=True)
-    relation = Column(String, nullable=True)
-    phone = Column(String, nullable=True)
-    date_of_death = Column(String, nullable=True)
-    date_of_burial = Column(String, nullable=True)
-    description = Column(Text, nullable=True)
-    sex = Column(String(10), nullable=True)
-    age = Column(String(10), nullable=True)
-    grave_type = Column(String, nullable=True)
-    grave_fee = Column(String, nullable=True)
-    undertaker = Column(String, nullable=True)
-    board_of_health_no = Column(String, nullable=True)
-    svc_no = Column(String, nullable=True)
-
-    card = relationship("Card", back_populates="ocr_result")
-
     __table_args__ = (
         Index("ix_ocr_results_review_status", "review_status"),
-        Index("ix_ocr_results_confidence", "confidence_score"),
+        Index("ix_ocr_results_confidence_score", "confidence_score"),
     )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    card_id: Mapped[str] = mapped_column(String(36), ForeignKey("cards.id", ondelete="CASCADE"), nullable=False, unique=True)
+
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_fields_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    word_confidences: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON if you want
+
+    ocr_engine_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    processed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # minimal fields for this phase
+    deceased_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    date_of_death: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    card: Mapped["Card"] = relationship("Card", back_populates="ocr_result")

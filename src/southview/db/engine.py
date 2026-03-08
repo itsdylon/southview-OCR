@@ -1,48 +1,59 @@
-"""Database engine and session management."""
+# src/southview/db/engine.py
+from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 
-from southview.config import get_config
-from southview.db.models import Base
-
-_engine: Engine | None = None
-_SessionLocal: sessionmaker | None = None
+_ENGINE: Optional[Engine] = None
+_SessionLocal: Optional[sessionmaker] = None
 
 
-def _set_sqlite_pragmas(dbapi_connection, connection_record):
-    """Enable WAL mode and other performance pragmas for SQLite."""
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
-
-
-def init_db(db_path: str | Path | None = None) -> Engine:
-    """Initialize the database engine and create all tables."""
-    global _engine, _SessionLocal
-
-    if db_path is None:
-        config = get_config()
-        db_path = config["database"]["path"]
+def init_db(db_path: str | Path) -> Engine:
+    """
+    Initialize SQLite engine + sessionmaker. Enables WAL mode.
+    Call this once at app startup.
+    """
+    global _ENGINE, _SessionLocal
 
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    _engine = create_engine(f"sqlite:///{db_path}", echo=False)
-    event.listen(_engine, "connect", _set_sqlite_pragmas)
+    url = f"sqlite:///{db_path}"
+    engine = create_engine(
+        url,
+        future=True,
+        echo=False,
+        connect_args={"check_same_thread": False},  # FastAPI threads
+    )
 
-    Base.metadata.create_all(_engine)
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL;")
+        cur.execute("PRAGMA foreign_keys=ON;")
+        cur.close()
 
-    _SessionLocal = sessionmaker(bind=_engine)
-    return _engine
+    _ENGINE = engine
+    _SessionLocal = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False, future=True)
+
+    # create tables
+    from southview.db.models import Base  # noqa
+    Base.metadata.create_all(bind=_ENGINE)
+
+    return _ENGINE
+
+
+def get_engine() -> Engine:
+    if _ENGINE is None:
+        raise RuntimeError("DB engine not initialized. Call init_db() first.")
+    return _ENGINE
 
 
 def get_session() -> Session:
-    """Get a new database session."""
     if _SessionLocal is None:
-        init_db()
+        raise RuntimeError("DB not initialized. Call init_db() first.")
     return _SessionLocal()

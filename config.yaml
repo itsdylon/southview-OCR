@@ -20,7 +20,7 @@ ocr:
   engine: tesseract
   tesseract:
     oem: 1          # LSTM neural net
-    psm: 6          # Single uniform block of text
+    psm: 4          # Single uniform block of text
     lang: eng
   preprocessing:
     deskew: true
@@ -33,6 +33,11 @@ ocr:
   confidence:
     auto_approve: 0.85      # Cards above this are auto-approved
     review_threshold: 0.70   # Cards below this are flagged
+  debug:
+    save_intermediate_images: true
+    save_tesseract_dataframe: true
+    debug_dir: data/debug/ocr
+    sample_save_rate: 1   # save every card; set to 10 later
 
 backup:
   directory: data/backups
