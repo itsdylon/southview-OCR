@@ -15,6 +15,8 @@ _FRONTEND_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    config = get_config()
+
     app = FastAPI(
         title="Southview OCR",
         description="Historical index card digitization pipeline",
@@ -31,11 +33,12 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def startup():
-        config = get_config()
         init_db(config["database"]["path"])
-        frames_dir = Path(config["storage"]["frames_dir"])
-        frames_dir.mkdir(parents=True, exist_ok=True)
-        app.mount("/static/frames", StaticFiles(directory=str(frames_dir)), name="frames")
+
+    # Mount static frames directory BEFORE any catch-all route
+    frames_dir = Path(config["storage"]["frames_dir"])
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/static/frames", StaticFiles(directory=str(frames_dir)), name="frames")
 
     # Import and include routers
     from southview.api.routes import backup, cards, export, jobs, videos, stats
