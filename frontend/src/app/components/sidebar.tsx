@@ -18,7 +18,7 @@ const navItems = [
   { path: '/jobs', icon: Cog, label: 'Jobs' },
   { path: '/review-queue', icon: ListChecks, label: 'Review Queue' },
   { path: '/search', icon: Search, label: 'Search' },
-  { path: '/export', icon: FileDown, label: 'Export & Backup' },
+  { path: '/export', icon: FileDown, label: 'Export' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 

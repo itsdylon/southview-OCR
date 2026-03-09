@@ -479,6 +479,18 @@ export async function downloadExport(
   return res.blob();
 }
 
+export async function fetchThresholds(): Promise<{ auto_approve: number; review_threshold: number }> {
+  return apiFetch('/api/settings/thresholds');
+}
+
+export async function updateThresholds(autoApprove: number, reviewThreshold: number): Promise<void> {
+  await apiFetch('/api/settings/thresholds', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auto_approve: autoApprove, review_threshold: reviewThreshold }),
+  });
+}
+
 export async function triggerBackup(): Promise<{ status: string; backup_path: string }> {
   return apiFetch('/api/backup', { method: 'POST' });
 }

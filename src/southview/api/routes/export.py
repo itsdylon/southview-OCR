@@ -1,11 +1,27 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
+from southview.export.exporter import export_csv, export_json
 from southview.export.service import export_approved_cards_zip
 
 router = APIRouter(tags=["export"])
+
+
+@router.get("/export")
+def export_data(
+    format: str = Query("csv", regex="^(csv|json)$"),
+    video_id: str | None = Query(None),
+    status: str | None = Query(None),
+):
+    """Export card data as CSV or JSON."""
+    if format == "json":
+        data = export_json(video_id=video_id, status=status)
+        return Response(content=data, media_type="application/json")
+    else:
+        data = export_csv(video_id=video_id, status=status)
+        return Response(content=data, media_type="text/csv")
 
 
 @router.get("/export/video/{video_id}")

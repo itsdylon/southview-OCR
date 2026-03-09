@@ -1,15 +1,41 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { DashboardLayout } from '../layouts/dashboard-layout';
+import * as api from '../data/api';
+
+const DEFAULTS = { autoApprove: 85, pendingReview: 70 };
 
 export default function OCRSettingsPage() {
-  const [autoApproveThreshold, setAutoApproveThreshold] = useState(85);
-  const [pendingReviewThreshold, setPendingReviewThreshold] = useState(70);
+  const [autoApproveThreshold, setAutoApproveThreshold] = useState(DEFAULTS.autoApprove);
+  const [pendingReviewThreshold, setPendingReviewThreshold] = useState(DEFAULTS.pendingReview);
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
-    toast.success('Settings saved successfully');
+  useEffect(() => {
+    api.fetchThresholds().then((data) => {
+      setAutoApproveThreshold(Math.round(data.auto_approve * 100));
+      setPendingReviewThreshold(Math.round(data.review_threshold * 100));
+    }).catch(() => {
+      // keep defaults
+    });
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.updateThresholds(autoApproveThreshold / 100, pendingReviewThreshold / 100);
+      toast.success('Settings saved successfully');
+    } catch {
+      toast.error('Failed to save settings');
+    } finally {
+      setSaving(false);
+    }
   };
-  
+
+  const handleReset = () => {
+    setAutoApproveThreshold(DEFAULTS.autoApprove);
+    setPendingReviewThreshold(DEFAULTS.pendingReview);
+  };
+
   return (
     <DashboardLayout>
       <div className="p-8 max-w-4xl mx-auto">
@@ -19,11 +45,11 @@ export default function OCRSettingsPage() {
             Configure OCR processing and confidence thresholds
           </p>
         </div>
-        
+
         {/* Confidence Thresholds */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-6">Confidence Thresholds</h2>
-          
+
           <div className="space-y-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -46,7 +72,7 @@ export default function OCRSettingsPage() {
                 Cards with confidence ≥ {autoApproveThreshold}% will be automatically approved
               </p>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Pending Review Threshold
@@ -68,7 +94,7 @@ export default function OCRSettingsPage() {
                 Cards between {pendingReviewThreshold}% and {autoApproveThreshold}% will be marked for review
               </p>
             </div>
-            
+
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-gray-900 mb-2">Current Configuration</h3>
               <div className="space-y-1 text-sm text-gray-600">
@@ -79,17 +105,21 @@ export default function OCRSettingsPage() {
             </div>
           </div>
         </div>
-        
+
         {/* Actions */}
         <div className="flex justify-end gap-3">
-          <button className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors font-medium">
+          <button
+            onClick={handleReset}
+            className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors font-medium"
+          >
             Reset to Defaults
           </button>
           <button
             onClick={handleSave}
-            className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-semibold"
+            disabled={saving}
+            className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-semibold disabled:opacity-50"
           >
-            Save Changes
+            {saving ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
       </div>

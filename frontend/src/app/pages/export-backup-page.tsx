@@ -32,9 +32,9 @@ export default function ExportBackupPage() {
     <DashboardLayout>
       <div className="p-8 max-w-5xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Export & Backup</h1>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Export</h1>
           <p className="text-gray-600">
-            Export approved records and manage database backups
+            Export approved records
           </p>
         </div>
 
