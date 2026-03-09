@@ -86,7 +86,6 @@ export default function JobsPage() {
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-600 uppercase">Status</th>
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-600 uppercase">Progress</th>
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-600 uppercase">Created</th>
-                <th className="text-right px-6 py-3 text-xs font-semibold text-gray-600 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -128,17 +127,6 @@ export default function JobsPage() {
                       hour: 'numeric',
                       minute: '2-digit',
                     })}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedJob(job);
-                      }}
-                      className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-                    >
-                      View Details
-                    </button>
                   </td>
                 </tr>
               ))}
