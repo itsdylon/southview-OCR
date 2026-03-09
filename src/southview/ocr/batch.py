@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from southview.config import get_config
 from southview.db.engine import get_session
 from southview.db.models import Card, OCRResult
 from southview.ocr.processor_min import process_card_min
@@ -28,11 +29,17 @@ def _review_status_from_conf(
 def run_ocr_for_video(
     video_id: str,
     *,
-    flag_threshold: float = 0.55,
-    auto_approve_threshold: float = 0.90,
+    flag_threshold: float | None = None,
+    auto_approve_threshold: float | None = None,
     auto_approve: bool = True,
     force: bool = False,
 ) -> dict:
+    # Read thresholds from config, fall back to sensible defaults
+    conf_config = get_config().get("ocr", {}).get("confidence", {})
+    if flag_threshold is None:
+        flag_threshold = conf_config.get("review_threshold", 0.70)
+    if auto_approve_threshold is None:
+        auto_approve_threshold = conf_config.get("auto_approve", 0.85)
     session = get_session()
     processed = 0
     failed = 0

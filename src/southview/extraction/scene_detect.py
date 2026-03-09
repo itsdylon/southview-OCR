@@ -21,6 +21,9 @@ def detect_transitions(video_path: str) -> list[int]:
     if not cap.isOpened():
         raise ValueError(f"Could not open video: {video_path}")
 
+    # Auto-rotate frames based on video rotation metadata
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+
     transitions = []
     prev_hist = None
     frame_idx = 0

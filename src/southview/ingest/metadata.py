@@ -30,6 +30,8 @@ def extract_video_metadata(file_path: str | Path) -> dict:
         duration = frame_count / fps if fps > 0 else 0.0
         codec = _fourcc_to_str(cap.get(cv2.CAP_PROP_FOURCC))
 
+        rotation = cap.get(cv2.CAP_PROP_ORIENTATION_META)
+
         return {
             "fps": fps,
             "frame_count": frame_count,
@@ -37,6 +39,7 @@ def extract_video_metadata(file_path: str | Path) -> dict:
             "resolution_h": height,
             "duration_seconds": duration,
             "codec": codec,
+            "rotation": int(rotation) if rotation else 0,
         }
     finally:
         cap.release()

@@ -37,6 +37,12 @@ def extract_frames(
     if not cap.isOpened():
         raise ValueError(f"Could not open video: {video_path}")
 
+    # Auto-rotate frames based on video rotation metadata (e.g. phone videos)
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+    rotation = cap.get(cv2.CAP_PROP_ORIENTATION_META)
+    if rotation:
+        logger.info(f"Video has rotation metadata: {rotation}°, auto-correcting frames")
+
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     # Build segments: ranges between transitions
