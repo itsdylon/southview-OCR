@@ -66,9 +66,9 @@ def extract_frames(
             )
             continue
 
-        filename = f"card_{seq_idx + 1:04d}.png"
+        filename = f"card_{seq_idx + 1:04d}.jpg"
         image_path = output_dir / filename
-        cv2.imwrite(str(image_path), best_frame)
+        cv2.imwrite(str(image_path), best_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
         results.append({
             "frame_number": best_frame_num,

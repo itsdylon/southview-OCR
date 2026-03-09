@@ -2,11 +2,15 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from southview.config import get_config
 from southview.db.engine import init_db
+
+# Resolve frontend dist directory (relative to project root)
+_FRONTEND_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
 
 def create_app() -> FastAPI:
@@ -19,7 +23,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -41,5 +45,17 @@ def create_app() -> FastAPI:
     app.include_router(export.router, prefix="/api")
     app.include_router(backup.router, prefix="/api")
     app.include_router(stats.router, prefix="/api")
+
+    # Serve frontend SPA (must be last — catches all non-API routes)
+    if _FRONTEND_DIR.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIR / "assets")), name="frontend-assets")
+
+        @app.get("/{path:path}")
+        async def spa_fallback(path: str):
+            """Serve frontend files, fall back to index.html for SPA routing."""
+            file = _FRONTEND_DIR / path
+            if file.is_file():
+                return FileResponse(file)
+            return FileResponse(_FRONTEND_DIR / "index.html")
 
     return app
