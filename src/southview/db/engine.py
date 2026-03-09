@@ -44,7 +44,46 @@ def init_db(db_path: str | Path) -> Engine:
     from southview.db.models import Base  # noqa
     Base.metadata.create_all(bind=_ENGINE)
 
+    # migrations: make videos.filepath nullable (SQLite requires table rebuild)
+    _migrate_filepath_nullable(engine)
+
     return _ENGINE
+
+
+def _migrate_filepath_nullable(engine: Engine) -> None:
+    """One-time migration: allow videos.filepath to be NULL."""
+    with engine.connect() as conn:
+        # Check if filepath column is still NOT NULL
+        rows = conn.exec_driver_sql(
+            "SELECT [notnull] FROM pragma_table_info('videos') WHERE name='filepath'"
+        ).fetchone()
+        if rows and rows[0] == 1:
+            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            conn.exec_driver_sql("""
+                CREATE TABLE videos_new AS SELECT * FROM videos
+            """)
+            conn.exec_driver_sql("DROP TABLE videos")
+            conn.exec_driver_sql("""
+                CREATE TABLE videos (
+                    id VARCHAR(36) PRIMARY KEY,
+                    filename VARCHAR NOT NULL,
+                    filepath VARCHAR,
+                    file_hash VARCHAR(64) NOT NULL UNIQUE,
+                    status VARCHAR(20) NOT NULL DEFAULT 'uploaded',
+                    duration_seconds FLOAT,
+                    resolution_w INTEGER,
+                    resolution_h INTEGER,
+                    fps FLOAT,
+                    frame_count INTEGER,
+                    file_size_bytes INTEGER,
+                    upload_timestamp DATETIME NOT NULL,
+                    metadata_json TEXT
+                )
+            """)
+            conn.exec_driver_sql("INSERT INTO videos SELECT * FROM videos_new")
+            conn.exec_driver_sql("DROP TABLE videos_new")
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+            conn.commit()
 
 
 def get_engine() -> Engine:

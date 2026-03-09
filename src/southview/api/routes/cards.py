@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from southview.config import get_config
 from southview.review.service import (
@@ -35,21 +35,21 @@ def _image_url(image_path: str) -> str | None:
 
 
 class CardListItem(BaseModel):
-    card_id: str
+    id: str = Field(validation_alias="card_id")
     video_id: str
     sequence_index: int
     frame_number: int
     image_path: str
     image_url: str | None = None
-    review_status: str | None
-    confidence_score: float | None
+    review_status: str | None = None
+    confidence_score: float | None = None
     deceased_name: str | None = None
     date_of_death: str | None = None
     error_message: str | None = None
 
 
 class CardDetailResponse(BaseModel):
-    card_id: str
+    id: str = Field(validation_alias="card_id")
     video_id: str
     sequence_index: int
     frame_number: int
@@ -93,7 +93,15 @@ class BatchReviewRequest(BaseModel):
     reviewed_by: str | None = None
 
 
-@router.get("/cards", response_model=list[CardListItem])
+class PaginatedCards(BaseModel):
+    cards: list[CardListItem]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+
+
+@router.get("/cards", response_model=PaginatedCards)
 def list_cards_endpoint(
     video_id: str | None = None,
     # legacy single status filter (optional)
@@ -108,9 +116,9 @@ def list_cards_endpoint(
     dod_to: str | None = None,
     sort: str = Query("confidence", pattern="^(confidence|sequence_index)$"),
     page: int = Query(1, ge=1),
-    per_page: int = Query(50, ge=1, le=200),
+    per_page: int = Query(50, ge=1, le=500),
 ):
-    rows = svc_list_cards(
+    result = svc_list_cards(
         video_id=video_id,
         status=status,
         status_in=status_in,
@@ -123,19 +131,52 @@ def list_cards_endpoint(
         page=page,
         per_page=per_page,
     )
-    for r in rows:
+    for r in result["cards"]:
         r["image_url"] = _image_url(r["image_path"])
-    return rows
+    return result
 
 
-@router.get("/cards/{card_id}", response_model=CardDetailResponse)
+@router.get("/cards/{card_id}")
 def get_card_detail_endpoint(card_id: str):
     try:
         d = svc_get_card_detail(card_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    d["image_url"] = _image_url(d["image_path"])
-    return d
+
+    return {
+        "id": d["card_id"],
+        "video_id": d["video_id"],
+        "sequence_index": d["sequence_index"],
+        "frame_number": d["frame_number"],
+        "image_path": d["image_path"],
+        "image_url": _image_url(d["image_path"]),
+        "ocr": {
+            "raw_text": d.get("raw_text", ""),
+            "corrected_text": d.get("corrected_text"),
+            "confidence_score": d.get("confidence_score", 0),
+            "word_confidences": d.get("word_confidences"),
+            "review_status": d.get("review_status", "pending"),
+            "reviewed_by": d.get("reviewed_by"),
+            "reviewed_at": d.get("reviewed_at"),
+            "raw_fields_json": d.get("raw_fields_json"),
+            "processed_at": d.get("processed_at"),
+            "deceased_name": d.get("deceased_name"),
+            "address": d.get("address"),
+            "owner": d.get("owner"),
+            "relation": d.get("relation"),
+            "phone": d.get("phone"),
+            "date_of_death": d.get("date_of_death"),
+            "date_of_burial": d.get("date_of_burial"),
+            "description": d.get("description"),
+            "sex": d.get("sex"),
+            "age": d.get("age"),
+            "grave_type": d.get("grave_type"),
+            "grave_fee": d.get("grave_fee"),
+            "undertaker": d.get("undertaker"),
+            "board_of_health_no": d.get("board_of_health_no"),
+            "svc_no": d.get("svc_no"),
+        },
+    }
 
 
 @router.put("/cards/{card_id}/review")

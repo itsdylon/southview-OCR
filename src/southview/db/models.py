@@ -24,7 +24,7 @@ class Video(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     filename: Mapped[str] = mapped_column(String, nullable=False)
-    filepath: Mapped[str] = mapped_column(String, nullable=False)
+    filepath: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
 
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="uploaded")

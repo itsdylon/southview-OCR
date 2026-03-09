@@ -37,13 +37,9 @@ def list_cards(
     sort: str = "confidence",
     page: int = 1,
     per_page: int = 50,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """
-    Returns lightweight rows for review/search UI.
-    - q: substring search on deceased_name (case-insensitive)
-    - dod_from/dod_to: ISO date strings YYYY-MM-DD, compared to OCRResult.date_of_death text
-      (works because you are storing ISO in your pipeline)
-    - status_in: comma list, e.g. "approved,corrected"
+    Returns paginated result with keys: cards, total, page, per_page, pages.
     """
     session = get_session()
     try:
@@ -86,6 +82,10 @@ def list_cards(
         else:
             stmt = stmt.join(OCRResult, OCRResult.card_id == Card.id)
 
+        # total count (before pagination)
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = session.execute(count_stmt).scalar_one()
+
         # sorting
         if sort == "sequence_index":
             stmt = stmt.order_by(Card.sequence_index.asc())
@@ -99,10 +99,10 @@ def list_cards(
 
         cards = list(session.execute(stmt).scalars().all())
 
-        out: list[dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
         for c in cards:
             r = c.ocr_result
-            out.append(
+            rows.append(
                 {
                     "card_id": c.id,
                     "video_id": c.video_id,
@@ -116,7 +116,15 @@ def list_cards(
                     "error_message": getattr(r, "error_message", None) if r else None,
                 }
             )
-        return out
+
+        pages = max(1, -(-total // per_page))  # ceiling division
+        return {
+            "cards": rows,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": pages,
+        }
     finally:
         session.close()
 

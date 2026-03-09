@@ -188,7 +188,7 @@ function mapJob(j: RawJob): Job {
 }
 
 function mapCardFromList(c: RawCard): CardWithOCR {
-  const imagePath = `/static/frames/${c.video_id}/card_${String(c.sequence_index).padStart(4, '0')}.png`;
+  const imagePath = `/static/frames/${c.video_id}/card_${String(c.sequence_index).padStart(4, '0')}.jpg`;
   return {
     id: c.id,
     videoId: c.video_id,
@@ -223,7 +223,7 @@ function mapCardFromList(c: RawCard): CardWithOCR {
 }
 
 function mapCardFromDetail(d: RawCardDetail): CardWithOCR {
-  const imagePath = d.image_url || `/static/frames/${d.video_id}/card_${String(d.sequence_index).padStart(4, '0')}.png`;
+  const imagePath = d.image_url || `/static/frames/${d.video_id}/card_${String(d.sequence_index).padStart(4, '0')}.jpg`;
   const ocr = d.ocr;
   return {
     id: d.id,

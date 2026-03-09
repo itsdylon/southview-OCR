@@ -7,6 +7,8 @@ from southview.review.service import get_review_stats
 router = APIRouter(tags=["stats"])
 
 
-@router.get("/stats/review")
+@router.get("/stats")
 def review_stats(video_id: str | None = None):
-    return get_review_stats(video_id=video_id)
+    """Return flat review counts for the dashboard."""
+    data = get_review_stats(video_id=video_id)
+    return data["counts"]

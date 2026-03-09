@@ -63,7 +63,7 @@ def export_approved_cards_zip(
             dod = _slug(ocr.date_of_death, 20)
             seq = f"{card.sequence_index:03d}"
 
-            dst = out_dir / f"{name}_{dod}__card_{seq}.png"
+            dst = out_dir / f"{name}_{dod}__card_{seq}{src.suffix}"
             shutil.copy2(src, dst)
             exported_files.append(dst)
 
