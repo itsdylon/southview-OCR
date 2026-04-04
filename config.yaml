@@ -8,6 +8,7 @@ storage:
   frames_dir: data/frames
   backups_dir: data/backups
   exports_dir: data/exports
+  delete_source_video_after_processing: false
 
 frame_extraction:
   sample_rate: 3                # Process every Nth frame
@@ -17,7 +18,15 @@ frame_extraction:
   blank_threshold: 50.0         # Minimum Laplacian variance to consider a frame non-blank
 
 ocr:
-  engine: tesseract
+  engine: gemini
+  gemini:
+    model: gemma-4-31b-it
+    api_key_env: GEMINI_API_KEY
+    endpoint: https://generativelanguage.googleapis.com/v1beta
+    timeout_seconds: 30
+    try_rotations: true   # Enable to retry alternate orientations
+    rotation_mode: sideways   # sideways | all | none
+    structured_fallback: true
   tesseract:
     oem: 1          # LSTM neural net
     psm: 4          # Single uniform block of text
@@ -31,8 +40,8 @@ ocr:
     binarize: true
     binarize_method: otsu   # otsu | adaptive
   confidence:
-    auto_approve: 0.85      # Cards above this are auto-approved
-    review_threshold: 0.70   # Cards below this are flagged
+    auto_approve: 0.7      # Cards above this are auto-approved
+    review_threshold: 0.55   # Cards below this are flagged
   debug:
     save_intermediate_images: true
     save_tesseract_dataframe: true

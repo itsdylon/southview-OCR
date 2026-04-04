@@ -8,7 +8,14 @@ from pathlib import Path
 from sqlalchemy.orm import joinedload
 
 from southview.db.engine import get_session
-from southview.db.models import Card, OCRResult, Video
+from southview.db.models import Card, OCRResult
+
+
+def _parse_status_filter(status: str | None) -> list[str] | None:
+    if not status:
+        return None
+    items = [s.strip().lower() for s in status.split(",") if s.strip()]
+    return items or None
 
 
 def _query_cards(video_id: str | None = None, status: str | None = None) -> list[dict]:
@@ -18,12 +25,14 @@ def _query_cards(video_id: str | None = None, status: str | None = None) -> list
         query = (
             session.query(Card)
             .options(joinedload(Card.ocr_result), joinedload(Card.video))
+            .join(OCRResult, OCRResult.card_id == Card.id)
         )
 
         if video_id:
             query = query.filter(Card.video_id == video_id)
-        if status:
-            query = query.join(OCRResult).filter(OCRResult.review_status == status)
+        statuses = _parse_status_filter(status)
+        if statuses:
+            query = query.filter(OCRResult.review_status.in_(statuses))
 
         query = query.order_by(Card.video_id, Card.sequence_index)
         cards = query.all()
@@ -33,12 +42,15 @@ def _query_cards(video_id: str | None = None, status: str | None = None) -> list
             ocr = card.ocr_result
             results.append({
                 "card_id": card.id,
-                "video_filename": card.video.filename if card.video else "",
-                "video_id": card.video_id,
-                "sequence_index": card.sequence_index,
-                "raw_text": ocr.raw_text if ocr else "",
                 "deceased_name": ocr.deceased_name if ocr else "",
                 "date_of_death": ocr.date_of_death if ocr else "",
+                "date_of_burial": ocr.date_of_burial if ocr else "",
+                "description": ocr.description if ocr else "",
+                "sex": ocr.sex if ocr else "",
+                "age": ocr.age if ocr else "",
+                "undertaker": ocr.undertaker if ocr else "",
+                "svc_no": ocr.svc_no if ocr else "",
+                "full_text": ocr.raw_text if ocr else "",
                 "confidence_score": ocr.confidence_score if ocr else 0.0,
                 "review_status": ocr.review_status if ocr else "",
                 "reviewed_by": ocr.reviewed_by if ocr else "",
@@ -48,6 +60,10 @@ def _query_cards(video_id: str | None = None, status: str | None = None) -> list
         return results
     finally:
         session.close()
+
+
+def has_export_rows(video_id: str | None = None, status: str | None = None) -> bool:
+    return bool(_query_cards(video_id=video_id, status=status))
 
 
 def export_csv(

@@ -1,11 +1,27 @@
 import { Link } from 'react-router';
+import { toast } from 'sonner';
 import { Upload, Play } from 'lucide-react';
 import { DashboardLayout } from '../layouts/dashboard-layout';
 import { StatusChip } from '../components/status-chip';
-import { useVideos } from '../data/mock-db';
+import { useMockDb } from '../data/mock-db';
 
 export default function VideosPage() {
-  const videos = useVideos();
+  const { videos, deleteVideo } = useMockDb();
+
+  const handleDeleteVideo = async (videoId: string, filename: string) => {
+    if (!window.confirm(`Delete video "${filename}" and all extracted records?`)) {
+      return;
+    }
+
+    try {
+      await deleteVideo(videoId);
+      toast.success('Video deleted', { description: filename });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete video';
+      toast.error('Delete failed', { description: message });
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="p-8 max-w-7xl mx-auto">
@@ -77,13 +93,21 @@ export default function VideosPage() {
                     })}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <Link
-                      to={`/videos/${video.id}`}
-                      className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 text-sm font-medium"
-                    >
-                      <Play className="w-4 h-4" />
-                      View Details
-                    </Link>
+                    <div className="inline-flex items-center gap-4">
+                      <Link
+                        to={`/videos/${video.id}`}
+                        className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                      >
+                        <Play className="w-4 h-4" />
+                        View Details
+                      </Link>
+                      <button
+                        onClick={() => void handleDeleteVideo(video.id, video.filename)}
+                        className="text-sm font-medium text-red-600 hover:text-red-800"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

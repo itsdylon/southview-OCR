@@ -55,7 +55,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               <Video className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="font-semibold text-gray-900">Southview OCR</h1>
+              <h1 className="font-semibold text-gray-900">SVC OCR</h1>
               <p className="text-xs text-gray-500">Index Card Digitization</p>
             </div>
           </div>

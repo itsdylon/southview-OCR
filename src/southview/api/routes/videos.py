@@ -4,13 +4,15 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
+from southview.config import get_config
+from southview.db.engine import get_session
+from southview.db.models import Video
 from southview.ingest.video_upload import (
     SUPPORTED_EXTENSIONS,
     get_video as svc_get_video,
-    list_videos as svc_list_videos,
     upload_video,
 )
 
@@ -165,3 +167,35 @@ def get_video_endpoint(video_id: str):
         file_size_bytes=video.file_size_bytes,
         card_count=len(video.cards),
     )
+
+
+@router.delete("/videos/{video_id}", status_code=204)
+def delete_video_endpoint(video_id: str):
+    """Delete a video and all associated jobs/cards/results/files."""
+    session = get_session()
+    try:
+        video = session.query(Video).get(video_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+
+        video_path = Path(video.filepath) if video.filepath else None
+        frames_dir = Path(get_config()["storage"]["frames_dir"]) / video_id
+
+        session.delete(video)
+        session.commit()
+
+        if video_path and video_path.exists():
+            video_path.unlink()
+
+        if frames_dir.exists():
+            shutil.rmtree(frames_dir, ignore_errors=True)
+
+        return Response(status_code=204)
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()

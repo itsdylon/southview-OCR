@@ -3,10 +3,12 @@
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from southview.config import get_config
+from southview.db.engine import get_session
+from southview.db.models import Card
 from southview.review.service import (
     list_cards as svc_list_cards,
     get_card_detail as svc_get_card_detail,
@@ -17,9 +19,14 @@ from southview.review.service import (
 router = APIRouter(tags=["cards"])
 
 STRUCTURED_FIELDS = [
-    "deceased_name", "address", "owner", "relation", "phone",
-    "date_of_death", "date_of_burial", "description", "sex", "age",
-    "grave_type", "grave_fee", "undertaker", "board_of_health_no", "svc_no",
+    "deceased_name",
+    "date_of_death",
+    "date_of_burial",
+    "description",
+    "sex",
+    "age",
+    "undertaker",
+    "svc_no",
 ]
 
 
@@ -40,11 +47,27 @@ class CardListItem(BaseModel):
     sequence_index: int
     frame_number: int
     image_path: str
+    raw_text: str = ""
+    raw_fields_json: str | None = None
     image_url: str | None = None
     review_status: str | None = None
     confidence_score: float | None = None
+    rotation_degrees: int | None = 0
     deceased_name: str | None = None
+    address: str | None = None
+    owner: str | None = None
+    relation: str | None = None
+    phone: str | None = None
     date_of_death: str | None = None
+    date_of_burial: str | None = None
+    description: str | None = None
+    sex: str | None = None
+    age: str | None = None
+    grave_type: str | None = None
+    grave_fee: str | None = None
+    undertaker: str | None = None
+    board_of_health_no: str | None = None
+    svc_no: str | None = None
     error_message: str | None = None
 
 
@@ -154,6 +177,7 @@ def get_card_detail_endpoint(card_id: str):
             "raw_text": d.get("raw_text", ""),
             "corrected_text": d.get("corrected_text"),
             "confidence_score": d.get("confidence_score", 0),
+            "rotation_degrees": d.get("rotation_degrees", 0),
             "word_confidences": d.get("word_confidences"),
             "review_status": d.get("review_status", "pending"),
             "reviewed_by": d.get("reviewed_by"),
@@ -203,3 +227,41 @@ def submit_review_endpoint(card_id: str, body: ReviewRequest):
 @router.put("/cards/batch-review")
 def batch_review_endpoint(body: BatchReviewRequest):
     return svc_batch_approve(body.card_ids, reviewed_by=body.reviewed_by)
+
+
+@router.delete("/cards/{card_id}", status_code=204)
+def delete_card_endpoint(card_id: str):
+    session = get_session()
+    try:
+        card = session.query(Card).get(card_id)
+        if not card:
+            raise HTTPException(status_code=404, detail="Card not found")
+
+        image_path = Path(card.image_path) if card.image_path else None
+        frames_dir = None
+        if image_path:
+            try:
+                frames_root = Path(get_config()["storage"]["frames_dir"]).resolve()
+                frames_dir = image_path.resolve().parent
+                frames_dir.relative_to(frames_root)
+            except Exception:
+                frames_dir = None
+
+        session.delete(card)
+        session.commit()
+
+        if image_path and image_path.exists():
+            image_path.unlink()
+
+        if frames_dir and frames_dir.exists() and not any(frames_dir.iterdir()):
+            frames_dir.rmdir()
+
+        return Response(status_code=204)
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
