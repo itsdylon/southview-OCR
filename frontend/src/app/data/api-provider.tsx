@@ -28,6 +28,8 @@ interface MockDb {
   refreshVideos: () => Promise<void>;
   refreshJobs: () => Promise<void>;
   refreshCards: () => Promise<void>;
+  deleteVideo: (videoId: string) => Promise<void>;
+  deleteCard: (cardId: string) => Promise<void>;
 }
 
 const MockDbContext = createContext<MockDb | null>(null);
@@ -257,6 +259,30 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
     api.submitReview(cardId, {}, status).catch(console.error);
   }, []);
 
+  const deleteVideo = useCallback(async (videoId: string) => {
+    await api.deleteVideo(videoId);
+    setVideos((prev) => prev.filter((v) => v.id !== videoId));
+    setJobs((prev) => prev.filter((j) => j.videoId !== videoId));
+    setCards((prev) => prev.filter((c) => c.videoId !== videoId));
+    await Promise.all([refreshVideos(), refreshJobs(), refreshCards(), refreshStats()]);
+  }, [refreshCards, refreshJobs, refreshStats, refreshVideos]);
+
+  const deleteCard = useCallback(async (cardId: string) => {
+    const deletedCard = cards.find((c) => c.id === cardId);
+    await api.deleteCard(cardId);
+    setCards((prev) => prev.filter((c) => c.id !== cardId));
+    if (deletedCard) {
+      setVideos((prev) =>
+        prev.map((v) =>
+          v.id === deletedCard.videoId
+            ? { ...v, cardCount: Math.max(0, v.cardCount - 1) }
+            : v,
+        ),
+      );
+    }
+    await Promise.all([refreshVideos(), refreshCards(), refreshStats()]);
+  }, [cards, refreshCards, refreshStats, refreshVideos]);
+
   // --- Computed stats ---
 
   const pipelineStats = useMemo<PipelineStats>(() => {
@@ -310,6 +336,8 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
         refreshVideos,
         refreshJobs,
         refreshCards,
+        deleteVideo,
+        deleteCard,
       }}
     >
       {children}
@@ -329,9 +357,9 @@ export function useMockDb(): MockDb {
 }
 
 /** Drop-in replacement for the old useCardStore hook */
-export function useCardStore(): Pick<MockDb, 'cards' | 'updateCardFields' | 'updateCardStatus'> {
-  const { cards, updateCardFields, updateCardStatus } = useMockDbContext();
-  return { cards, updateCardFields, updateCardStatus };
+export function useCardStore(): Pick<MockDb, 'cards' | 'updateCardFields' | 'updateCardStatus' | 'deleteCard'> {
+  const { cards, updateCardFields, updateCardStatus, deleteCard } = useMockDbContext();
+  return { cards, updateCardFields, updateCardStatus, deleteCard };
 }
 
 /** Videos list */

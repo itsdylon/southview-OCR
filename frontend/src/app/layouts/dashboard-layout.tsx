@@ -21,7 +21,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           >
             <Menu className="w-5 h-5 text-gray-700" />
           </button>
-          <span className="font-semibold text-gray-900">Southview OCR</span>
+          <span className="font-semibold text-gray-900">SVC OCR</span>
         </div>
         <main className="flex-1">
           {children}

@@ -11,9 +11,14 @@ from southview.db.engine import get_session
 from southview.db.models import Card, OCRResult
 
 ALLOWED_STRUCTURED_FIELDS = {
-    "deceased_name", "address", "owner", "relation", "phone",
-    "date_of_death", "date_of_burial", "description", "sex", "age",
-    "grave_type", "grave_fee", "undertaker", "board_of_health_no", "svc_no",
+    "deceased_name",
+    "date_of_death",
+    "date_of_burial",
+    "description",
+    "sex",
+    "age",
+    "undertaker",
+    "svc_no",
 }
 
 
@@ -112,7 +117,23 @@ def list_cards(
                     "review_status": r.review_status if r else None,
                     "confidence_score": float(r.confidence_score) if r else None,
                     "deceased_name": r.deceased_name if r else None,
+                    "address": r.address if r else None,
+                    "owner": r.owner if r else None,
+                    "relation": r.relation if r else None,
+                    "phone": r.phone if r else None,
                     "date_of_death": r.date_of_death if r else None,
+                    "date_of_burial": r.date_of_burial if r else None,
+                    "description": r.description if r else None,
+                    "sex": r.sex if r else None,
+                    "age": r.age if r else None,
+                    "grave_type": r.grave_type if r else None,
+                    "grave_fee": r.grave_fee if r else None,
+                    "undertaker": r.undertaker if r else None,
+                    "board_of_health_no": r.board_of_health_no if r else None,
+                    "svc_no": r.svc_no if r else None,
+                    "raw_text": r.raw_text if r else "",
+                    "raw_fields_json": getattr(r, "raw_fields_json", None) if r else None,
+                    "rotation_degrees": getattr(r, "rotation_degrees", 0) if r else 0,
                     "error_message": getattr(r, "error_message", None) if r else None,
                 }
             )
@@ -149,11 +170,25 @@ def get_card_detail(card_id: str) -> dict[str, Any]:
             "raw_text": r.raw_text,
             "raw_fields_json": getattr(r, "raw_fields_json", None),
             "confidence_score": float(r.confidence_score),
+            "rotation_degrees": getattr(r, "rotation_degrees", 0),
             "review_status": r.review_status,
             "reviewed_by": r.reviewed_by,
             "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
             "deceased_name": r.deceased_name,
+            "address": r.address,
+            "owner": r.owner,
+            "relation": r.relation,
+            "phone": r.phone,
             "date_of_death": r.date_of_death,
+            "date_of_burial": r.date_of_burial,
+            "description": r.description,
+            "sex": r.sex,
+            "age": r.age,
+            "grave_type": r.grave_type,
+            "grave_fee": r.grave_fee,
+            "undertaker": r.undertaker,
+            "board_of_health_no": r.board_of_health_no,
+            "svc_no": r.svc_no,
             "error_message": getattr(r, "error_message", None),
         }
     finally:

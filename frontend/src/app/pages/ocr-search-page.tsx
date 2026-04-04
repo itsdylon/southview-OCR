@@ -16,6 +16,12 @@ export default function OCRSearchPage() {
   const filteredCards = cards.filter((c) =>
     c.ocrResult?.deceased_name?.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const getPreviewTransform = (rotationDegrees?: number) => {
+    const rotation = rotationDegrees || 0;
+    const isSideways = rotation % 180 !== 0;
+    return `rotate(${rotation}deg) scale(${isSideways ? 1.45 : 1})`;
+  };
   
   return (
     <DashboardLayout>
@@ -145,7 +151,7 @@ export default function OCRSearchPage() {
           
           {/* Detail Panel */}
           {selectedCard && selectedCard.ocrResult && (
-            <div className="w-[400px] bg-white border border-gray-200 rounded-xl p-6 sticky top-8 h-fit">
+            <div className="w-[460px] bg-white border border-gray-200 rounded-xl p-6 sticky top-8 h-fit">
               <div className="flex items-start justify-between mb-6">
                 <h2 className="text-xl font-bold text-gray-900">
                   {selectedCard.ocrResult.deceased_name || 'Unknown'}
@@ -160,11 +166,17 @@ export default function OCRSearchPage() {
               
               {/* Image */}
               <div className="mb-6">
-                <img
-                  src={selectedCard.imagePath}
-                  alt="Card scan"
-                  className="w-full h-48 object-cover rounded-lg border border-gray-200"
-                />
+                <div className="h-[380px] bg-gray-50 border border-gray-200 rounded-lg p-4 flex items-center justify-center overflow-hidden">
+                  <img
+                    src={selectedCard.imagePath}
+                    alt="Card scan"
+                    style={{
+                      transform: getPreviewTransform(selectedCard.ocrResult.rotationDegrees),
+                      transformOrigin: 'center center',
+                    }}
+                    className="max-w-full max-h-full w-auto h-auto object-contain rounded-lg"
+                  />
+                </div>
               </div>
               
               {/* Details */}
@@ -176,15 +188,19 @@ export default function OCRSearchPage() {
                     band={getConfidenceBand(selectedCard.ocrResult.confidenceScore)}
                   />
                 </div>
-                <DetailRow label="Address" value={selectedCard.ocrResult.address} />
                 <DetailRow label="Sex" value={selectedCard.ocrResult.sex} />
                 <DetailRow label="Age" value={selectedCard.ocrResult.age} />
                 <DetailRow label="Date of Death" value={selectedCard.ocrResult.date_of_death} />
                 <DetailRow label="Date of Burial" value={selectedCard.ocrResult.date_of_burial} />
                 <DetailRow label="Description" value={selectedCard.ocrResult.description} />
-                <DetailRow label="Owner" value={selectedCard.ocrResult.owner} />
                 <DetailRow label="Undertaker" value={selectedCard.ocrResult.undertaker} />
                 <DetailRow label="SVC No." value={selectedCard.ocrResult.svc_no} />
+                <div className="border-b border-gray-100 pb-2">
+                  <span className="block text-gray-600 mb-2">Full Text:</span>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs font-mono text-gray-700 whitespace-pre-wrap max-h-44 overflow-y-auto">
+                    {selectedCard.ocrResult.rawText || 'No OCR text available'}
+                  </div>
+                </div>
               </div>
               
               <div className="mt-6">
