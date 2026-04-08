@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 
+from southview.config import get_config
 from southview.db.engine import get_session
 from southview.db.models import Card, Video
 from southview.extraction.frame_extractor import extract_frames
@@ -33,8 +34,14 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
         frame_results = extract_frames(video.filepath, video_id)
         update_progress(job_id, 50)
 
-        # Create Card records
-        cards = []
+        # Create Card records in chunks for large runs.
+        cfg = get_config().get("frame_extraction", {})
+        db_insert_batch_size = int(cfg.get("db_insert_batch_size", 500))
+        if db_insert_batch_size < 1:
+            db_insert_batch_size = 500
+
+        cards_inserted = 0
+        pending_in_batch = 0
         for result in frame_results:
             card = Card(
                 video_id=video_id,
@@ -44,11 +51,16 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
                 sequence_index=result["sequence_index"],
             )
             session.add(card)
-            cards.append(card)
-        session.commit()
+            cards_inserted += 1
+            pending_in_batch += 1
+            if pending_in_batch >= db_insert_batch_size:
+                session.commit()
+                pending_in_batch = 0
+        if pending_in_batch:
+            session.commit()
 
         # Phase 2: OCR (50–100%)
-        logger.info(f"Running OCR on {len(cards)} cards")
+        logger.info(f"Running OCR on {cards_inserted} cards")
         ocr_result = run_ocr_for_video(video_id, force=True)
         logger.info(f"OCR complete: {ocr_result['processed']} processed, {ocr_result['failed']} failed")
         update_progress(job_id, 100)
@@ -65,7 +77,7 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
             video.filepath = None
 
         session.commit()
-        logger.info(f"Pipeline complete for video {video_id}: {len(cards)} cards processed")
+        logger.info(f"Pipeline complete for video {video_id}: {cards_inserted} cards processed")
 
     except Exception as e:
         logger.exception(f"Pipeline failed for video {video_id}")

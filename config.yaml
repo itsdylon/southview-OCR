@@ -15,6 +15,10 @@ frame_extraction:
   min_stable_frames: 5          # Minimum stable frames to count as a card
   sharpness_method: laplacian   # Sharpness metric
   blank_threshold: 50.0         # Minimum Laplacian variance to consider a frame non-blank
+  blur_threshold: 50.0          # Reject best-frame candidates below this as blurry
+  dedup_enabled: true           # Drop adjacent perceptual duplicates after best-frame selection
+  dedup_hamming_threshold: 8    # Max pHash Hamming distance to treat adjacent cards as duplicates
+  db_insert_batch_size: 500     # Commit Card inserts in batches to scale to large jobs
 
 ocr:
   engine: tesseract
