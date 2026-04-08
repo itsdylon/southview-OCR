@@ -4,11 +4,67 @@ Usage:
     python -m southview serve          — Start the API server
     python -m southview upload <path>  — Upload a video
     python -m southview process <id>   — Process a video
+    python -m southview bakeoff ...    — Run/summarize model bake-off
     python -m southview export [opts]  — Export data
     python -m southview backup         — Create a backup
 """
 
+import argparse
 import sys
+
+
+def _run_bakeoff_command(argv: list[str]) -> None:
+    from southview.ocr.bakeoff import ALL_MODEL_IDS, run_bakeoff, summarize_bakeoff
+
+    parser = argparse.ArgumentParser(
+        prog="python -m southview bakeoff",
+        description="Run or summarize Southview OCR model bake-off results.",
+    )
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
+
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Run model bake-off on a curated card manifest and write CSV/summary artifacts.",
+    )
+    run_parser.add_argument("--manifest", required=True, help="Path to manifest CSV")
+    run_parser.add_argument("--out-dir", required=True, help="Output directory for bake-off artifacts")
+    run_parser.add_argument(
+        "--models",
+        nargs="+",
+        default=ALL_MODEL_IDS,
+        help="Optional model list override.",
+    )
+
+    summarize_parser = subparsers.add_parser(
+        "summarize",
+        help="Recompute summary metrics from an existing bake-off run and adjudication file.",
+    )
+    summarize_parser.add_argument("--run-dir", required=True, help="Bake-off run directory")
+    summarize_parser.add_argument(
+        "--adjudication",
+        required=True,
+        help="Adjudication CSV with human_name_correct/human_dod_correct overrides.",
+    )
+
+    args = parser.parse_args(argv)
+
+    if args.subcommand == "run":
+        result = run_bakeoff(
+            manifest_path=args.manifest,
+            out_dir=args.out_dir,
+            model_ids=list(args.models),
+        )
+        print("Bake-off complete.")
+        print(f"predictions: {result['predictions_csv']}")
+        print(f"adjudication: {result['adjudication_csv']}")
+        print(f"summary json: {result['summary_json']}")
+        print(f"summary md: {result['summary_md']}")
+        return
+
+    result = summarize_bakeoff(run_dir=args.run_dir, adjudication_path=args.adjudication)
+    print("Bake-off summary updated.")
+    print(f"summary json: {result['summary_json']}")
+    print(f"summary md: {result['summary_md']}")
 
 
 def main():
@@ -57,6 +113,9 @@ def main():
         print(f"Job created: {job.id}")
         run_full_pipeline(job.id, video_id)
         print("Processing complete.")
+
+    elif command == "bakeoff":
+        _run_bakeoff_command(sys.argv[2:])
 
     elif command == "export":
         from southview.db.engine import init_db
