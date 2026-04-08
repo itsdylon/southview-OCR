@@ -113,12 +113,20 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
 
         logger.info("Running OCR on %d cards", len(cards))
         ocr_result = run_ocr_for_video(video_id, force=True)
+        ocr_processed = int(ocr_result.get("processed", 0) or 0)
+        ocr_failed = int(ocr_result.get("failed", 0) or 0)
+        ocr_total = ocr_processed + ocr_failed
         logger.info(
             "OCR complete: %s processed, %s failed",
-            ocr_result["processed"],
-            ocr_result["failed"],
+            ocr_processed,
+            ocr_failed,
         )
-        update_progress(job_id, 100)
+
+        if ocr_failed > 0:
+            raise RuntimeError(
+                f"OCR failed for {ocr_failed} card(s) out of {ocr_total}; "
+                "marking pipeline as failed."
+            )
 
         mark_completed(job_id)
         video.status = "completed"
