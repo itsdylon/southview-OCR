@@ -8,7 +8,7 @@ from pathlib import Path
 from sqlalchemy.orm import joinedload
 
 from southview.db.engine import get_session
-from southview.db.models import Card, OCRResult, Video
+from southview.db.models import Card, OCRResult, STRUCTURED_OCR_FIELDS, Video
 
 
 def _query_cards(video_id: str | None = None, status: str | None = None) -> list[dict]:
@@ -31,19 +31,20 @@ def _query_cards(video_id: str | None = None, status: str | None = None) -> list
         results = []
         for card in cards:
             ocr = card.ocr_result
-            results.append({
+            row = {
                 "card_id": card.id,
                 "video_filename": card.video.filename if card.video else "",
                 "video_id": card.video_id,
                 "sequence_index": card.sequence_index,
                 "raw_text": ocr.raw_text if ocr else "",
-                "deceased_name": ocr.deceased_name if ocr else "",
-                "date_of_death": ocr.date_of_death if ocr else "",
                 "confidence_score": ocr.confidence_score if ocr else 0.0,
                 "review_status": ocr.review_status if ocr else "",
                 "reviewed_by": ocr.reviewed_by if ocr else "",
                 "image_path": card.image_path,
-            })
+            }
+            for field in STRUCTURED_OCR_FIELDS:
+                row[field] = getattr(ocr, field, "") if ocr else ""
+            results.append(row)
 
         return results
     finally:

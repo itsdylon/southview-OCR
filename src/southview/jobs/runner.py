@@ -1,6 +1,7 @@
 """Job execution orchestrator — runs the full pipeline."""
 
 import logging
+import time
 from pathlib import Path
 
 from southview.config import get_config
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 def run_full_pipeline(job_id: str, video_id: str) -> None:
     """Execute the full processing pipeline: frame extraction → OCR."""
     session = get_session()
+    pipeline_started = time.perf_counter()
     try:
         video = session.query(Video).get(video_id)
         if video is None:
@@ -26,12 +28,32 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
         video.status = "processing"
         session.commit()
 
+        source_video_path = (video.filepath or "").strip()
+        if not source_video_path:
+            raise ValueError(
+                "Video source file is unavailable. Re-upload the video before starting or retrying this job."
+            )
+        if not Path(source_video_path).exists():
+            raise FileNotFoundError(
+                f"Video source file not found on disk: {source_video_path}. "
+                "Re-upload the video before starting or retrying this job."
+            )
+
         # Idempotency: clean up any previous results
         cleanup_previous_results(video_id)
 
         # Phase 1: Frame extraction (0–50%)
-        logger.info(f"Extracting frames from video {video_id}")
-        frame_results = extract_frames(video.filepath, video_id)
+        logger.info("Pipeline start: job_id=%s video_id=%s", job_id, video_id)
+        frame_started = time.perf_counter()
+        logger.info("Extracting frames: video_id=%s", video_id)
+        frame_results = extract_frames(source_video_path, video_id)
+        frame_elapsed = time.perf_counter() - frame_started
+        logger.info(
+            "Frame extraction complete: video_id=%s frames_selected=%d elapsed=%.1fs",
+            video_id,
+            len(frame_results),
+            frame_elapsed,
+        )
         update_progress(job_id, 50)
 
         # Create Card records in chunks for large runs.
@@ -40,6 +62,7 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
         if db_insert_batch_size < 1:
             db_insert_batch_size = 500
 
+        card_insert_started = time.perf_counter()
         cards_inserted = 0
         pending_in_batch = 0
         for result in frame_results:
@@ -58,11 +81,35 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
                 pending_in_batch = 0
         if pending_in_batch:
             session.commit()
+        card_insert_elapsed = time.perf_counter() - card_insert_started
+        logger.info(
+            "Card insert complete: video_id=%s cards=%d elapsed=%.1fs batch_size=%d",
+            video_id,
+            cards_inserted,
+            card_insert_elapsed,
+            db_insert_batch_size,
+        )
 
         # Phase 2: OCR (50–100%)
-        logger.info(f"Running OCR on {cards_inserted} cards")
+        ocr_started = time.perf_counter()
+        logger.info("Running OCR: video_id=%s cards=%d", video_id, cards_inserted)
         ocr_result = run_ocr_for_video(video_id, force=True)
-        logger.info(f"OCR complete: {ocr_result['processed']} processed, {ocr_result['failed']} failed")
+        ocr_elapsed = time.perf_counter() - ocr_started
+        logger.info(
+            (
+                "OCR stage complete: video_id=%s processed=%d failed=%d "
+                "elapsed=%.1fs"
+            ),
+            video_id,
+            ocr_result["processed"],
+            ocr_result["failed"],
+            ocr_elapsed,
+        )
+        if cards_inserted > 0 and int(ocr_result.get("processed", 0)) == 0:
+            first_error = str(ocr_result.get("first_error") or "unknown OCR error")
+            raise RuntimeError(
+                f"OCR failed for all {cards_inserted} cards. Example error: {first_error}"
+            )
         update_progress(job_id, 100)
 
         mark_completed(job_id)
@@ -77,10 +124,26 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
             video.filepath = None
 
         session.commit()
-        logger.info(f"Pipeline complete for video {video_id}: {cards_inserted} cards processed")
+        pipeline_elapsed = time.perf_counter() - pipeline_started
+        logger.info(
+            (
+                "Pipeline complete: job_id=%s video_id=%s cards=%d "
+                "elapsed=%.1fs"
+            ),
+            job_id,
+            video_id,
+            cards_inserted,
+            pipeline_elapsed,
+        )
 
     except Exception as e:
-        logger.exception(f"Pipeline failed for video {video_id}")
+        pipeline_elapsed = time.perf_counter() - pipeline_started
+        logger.exception(
+            "Pipeline failed: job_id=%s video_id=%s elapsed=%.1fs",
+            job_id,
+            video_id,
+            pipeline_elapsed,
+        )
         mark_failed(job_id, str(e))
         try:
             video = session.query(Video).get(video_id)

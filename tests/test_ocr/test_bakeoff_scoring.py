@@ -79,3 +79,56 @@ def test_adjudication_override_takes_precedence():
 
     assert model_with["exact_accuracy"] == 1.0
     assert summary_with["ranking"][0]["model_id"] == "gemini-2.0-flash"
+
+
+def test_summarize_predictions_includes_roundtrip_timer_metrics():
+    cards = [
+        ManifestRecord(
+            card_id="c10",
+            image_path="/tmp/card10.png",
+            difficulty_bucket="easy",
+            deceased_name="SMITH, John",
+            date_of_death="2021-10-30",
+        ),
+        ManifestRecord(
+            card_id="c11",
+            image_path="/tmp/card11.png",
+            difficulty_bucket="easy",
+            deceased_name="DOE, Jane",
+            date_of_death="1940-01-05",
+        ),
+        ManifestRecord(
+            card_id="c12",
+            image_path="/tmp/card12.png",
+            difficulty_bucket="hard",
+            deceased_name="PARKS, Carl",
+            date_of_death="1999-12-07",
+        ),
+    ]
+    latencies = [100.0, 200.0, 300.0]
+    predictions = []
+    for card, latency in zip(cards, latencies):
+        predictions.append(
+            build_prediction_record(
+                card,
+                model_id="gpt-4.1-mini",
+                result=ProviderResult(
+                    deceased_name=card.deceased_name,
+                    date_of_death=card.date_of_death,
+                    raw_text="{}",
+                    latency_ms=latency,
+                ),
+            )
+        )
+
+    summary = summarize_predictions(predictions)
+    model = summary["models"][0]
+
+    assert model["avg_roundtrip_ms"] == 200.0
+    assert model["min_roundtrip_ms"] == 100.0
+    assert model["max_roundtrip_ms"] == 300.0
+    assert model["total_roundtrip_ms"] == 600.0
+    assert model["p50_roundtrip_ms"] == 200.0
+    assert model["p95_roundtrip_ms"] == 290.0
+    assert summary["ranking"][0]["avg_roundtrip_ms"] == 200.0
+    assert summary["ranking"][0]["p95_roundtrip_ms"] == 290.0

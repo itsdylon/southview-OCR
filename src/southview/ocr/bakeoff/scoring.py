@@ -78,15 +78,28 @@ def _rate(numerator: int, denominator: int) -> float:
     return numerator / denominator
 
 
+def _percentile(values: list[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = max(0.0, min(1.0, quantile)) * (len(ordered) - 1)
+    lower = int(rank)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = rank - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
 def _summarize_bucket_rows(rows: list[dict]) -> dict[str, float | int]:
     total = len(rows)
     name_correct = sum(1 for r in rows if r["final_name_match"])
     dod_correct = sum(1 for r in rows if r["final_dod_match"])
     exact_correct = sum(1 for r in rows if r["final_exact_match"])
     errors = sum(1 for r in rows if r["error"])
-    avg_latency_ms = (
-        sum(float(r["latency_ms"]) for r in rows) / total if total else 0.0
-    )
+    roundtrip_ms = [float(r["latency_ms"]) for r in rows]
+    total_roundtrip_ms = sum(roundtrip_ms)
+    avg_roundtrip_ms = (total_roundtrip_ms / total) if total else 0.0
 
     return {
         "cards_total": total,
@@ -95,7 +108,14 @@ def _summarize_bucket_rows(rows: list[dict]) -> dict[str, float | int]:
         "exact_accuracy": _rate(exact_correct, total),
         "error_count": errors,
         "error_rate": _rate(errors, total),
-        "avg_latency_ms": avg_latency_ms,
+        # `avg_latency_ms` is kept for backwards compatibility.
+        "avg_latency_ms": avg_roundtrip_ms,
+        "avg_roundtrip_ms": avg_roundtrip_ms,
+        "p50_roundtrip_ms": _percentile(roundtrip_ms, 0.50),
+        "p95_roundtrip_ms": _percentile(roundtrip_ms, 0.95),
+        "min_roundtrip_ms": min(roundtrip_ms) if roundtrip_ms else 0.0,
+        "max_roundtrip_ms": max(roundtrip_ms) if roundtrip_ms else 0.0,
+        "total_roundtrip_ms": total_roundtrip_ms,
     }
 
 
@@ -164,6 +184,8 @@ def summarize_predictions(
                 "name_accuracy": m["name_accuracy"],
                 "dod_accuracy": m["dod_accuracy"],
                 "error_count": m["error_count"],
+                "avg_roundtrip_ms": m["avg_roundtrip_ms"],
+                "p95_roundtrip_ms": m["p95_roundtrip_ms"],
             }
             for m in models_out
         ],
@@ -172,6 +194,7 @@ def summarize_predictions(
             -x["name_accuracy"],
             -x["dod_accuracy"],
             x["error_count"],
+            x["avg_roundtrip_ms"],
             x["model_id"],
         ),
     )
@@ -192,18 +215,23 @@ def render_summary_markdown(summary: dict) -> str:
     lines.append("")
     lines.append("## Ranking")
     lines.append("")
-    lines.append("| Rank | Model | Exact | Name | DoD | Errors |")
-    lines.append("| --- | --- | ---: | ---: | ---: | ---: |")
+    lines.append("| Rank | Model | Exact | Name | DoD | Errors | Avg RT (ms) | P95 RT (ms) |")
+    lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
 
     for idx, row in enumerate(summary.get("ranking", []), start=1):
         lines.append(
-            "| {rank} | {model} | {exact:.2%} | {name:.2%} | {dod:.2%} | {errors} |".format(
+            (
+                "| {rank} | {model} | {exact:.2%} | {name:.2%} | {dod:.2%} | "
+                "{errors} | {avg_rt:.1f} | {p95_rt:.1f} |"
+            ).format(
                 rank=idx,
                 model=row["model_id"],
                 exact=row["exact_accuracy"],
                 name=row["name_accuracy"],
                 dod=row["dod_accuracy"],
                 errors=row["error_count"],
+                avg_rt=row.get("avg_roundtrip_ms", 0.0),
+                p95_rt=row.get("p95_roundtrip_ms", 0.0),
             )
         )
 
@@ -215,13 +243,20 @@ def render_summary_markdown(summary: dict) -> str:
         lines.append(f"### {model['model_id']}")
         lines.append("")
         lines.append(
-            "Overall: exact={exact:.2%}, name={name:.2%}, dod={dod:.2%}, errors={errors}/{total} ({error_rate:.2%})".format(
+            (
+                "Overall: exact={exact:.2%}, name={name:.2%}, dod={dod:.2%}, "
+                "errors={errors}/{total} ({error_rate:.2%}), "
+                "roundtrip avg={avg_rt:.1f}ms p50={p50_rt:.1f}ms p95={p95_rt:.1f}ms"
+            ).format(
                 exact=model["exact_accuracy"],
                 name=model["name_accuracy"],
                 dod=model["dod_accuracy"],
                 errors=model["error_count"],
                 total=model["cards_total"],
                 error_rate=model["error_rate"],
+                avg_rt=model.get("avg_roundtrip_ms", 0.0),
+                p50_rt=model.get("p50_roundtrip_ms", 0.0),
+                p95_rt=model.get("p95_roundtrip_ms", 0.0),
             )
         )
         lines.append("")

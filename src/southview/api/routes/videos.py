@@ -50,7 +50,7 @@ class VideoListItem(BaseModel):
 class VideoDetailResponse(BaseModel):
     id: str
     filename: str
-    filepath: str
+    filepath: str | None
     status: str
     file_hash: str
     upload_timestamp: str | None

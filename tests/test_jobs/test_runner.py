@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from southview.db.engine import get_session
 from southview.db.models import Card, Job, Video
 from southview.jobs.runner import run_full_pipeline
@@ -80,5 +82,46 @@ def test_run_full_pipeline_inserts_cards_in_batches(tmp_path, tmp_db):
         assert video is not None
         assert video.status == "completed"
         assert video.filepath is None
+    finally:
+        verify_session.close()
+
+
+def test_run_full_pipeline_fails_fast_when_source_video_missing(tmp_db):
+    setup_session = get_session()
+    try:
+        video = Video(
+            filename="missing.mp4",
+            filepath=None,
+            file_hash="hash-runner-missing-source",
+            status="uploaded",
+        )
+        setup_session.add(video)
+        setup_session.flush()
+
+        job = Job(
+            video_id=video.id,
+            job_type="full_pipeline",
+            status="queued",
+            progress=0,
+        )
+        setup_session.add(job)
+        setup_session.commit()
+        video_id = video.id
+        job_id = job.id
+    finally:
+        setup_session.close()
+
+    with pytest.raises(ValueError, match="source file is unavailable"):
+        run_full_pipeline(job_id, video_id)
+
+    verify_session = get_session()
+    try:
+        job = verify_session.query(Job).get(job_id)
+        video = verify_session.query(Video).get(video_id)
+        assert job is not None
+        assert job.status == "failed"
+        assert "Re-upload the video" in (job.error_message or "")
+        assert video is not None
+        assert video.status == "failed"
     finally:
         verify_session.close()

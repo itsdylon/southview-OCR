@@ -216,9 +216,11 @@ class GeminiProvider:
         if self._client is not None:
             return self._client
 
-        api_key = self._api_key or os.getenv("GEMINI_API_KEY")
+        api_key = self._api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if isinstance(api_key, str):
+            api_key = api_key.strip()
         if not api_key:
-            raise RuntimeError("GEMINI_API_KEY is not set")
+            raise RuntimeError("Gemini API key is not set. Set GEMINI_API_KEY or GOOGLE_API_KEY.")
 
         try:
             from google import genai

@@ -11,7 +11,7 @@ router = APIRouter(tags=["export"])
 
 @router.get("/export")
 def export_data(
-    format: str = Query("csv", regex="^(csv|json)$"),
+    format: str = Query("csv", pattern="^(csv|json)$"),
     video_id: str | None = Query(None),
     status: str | None = Query(None),
 ):

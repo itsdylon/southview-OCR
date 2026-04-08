@@ -1,6 +1,7 @@
 """Job management endpoints."""
 
 import threading
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.orm import joinedload
@@ -13,6 +14,19 @@ from southview.jobs.runner import run_full_pipeline
 router = APIRouter(tags=["jobs"])
 
 
+def _has_source_video_file(video: Video) -> bool:
+    source = (video.filepath or "").strip()
+    return bool(source) and Path(source).exists()
+
+
+def _run_job_safely(job_id: str, video_id: str) -> None:
+    try:
+        run_full_pipeline(job_id, video_id)
+    except Exception:
+        # run_full_pipeline already logs and marks the job/video as failed.
+        return
+
+
 @router.post("/jobs/{video_id}/start")
 def start_job(video_id: str):
     """Create and start a processing job for a video."""
@@ -21,6 +35,11 @@ def start_job(video_id: str):
         video = session.query(Video).get(video_id)
         if not video:
             raise HTTPException(status_code=404, detail="Video not found")
+        if not _has_source_video_file(video):
+            raise HTTPException(
+                status_code=409,
+                detail="Source video file is unavailable. Re-upload the video before starting a job.",
+            )
         video_name = video.filename
     finally:
         session.close()
@@ -29,7 +48,7 @@ def start_job(video_id: str):
 
     # Run in background thread (simple single-machine approach)
     thread = threading.Thread(
-        target=run_full_pipeline, args=(job.id, video_id), daemon=True
+        target=_run_job_safely, args=(job.id, video_id), daemon=True
     )
     thread.start()
 
@@ -106,6 +125,11 @@ def retry_job(job_id: str):
             raise HTTPException(status_code=404, detail="Job not found")
         if old_job.status != "failed":
             raise HTTPException(status_code=400, detail="Can only retry failed jobs")
+        if not old_job.video or not _has_source_video_file(old_job.video):
+            raise HTTPException(
+                status_code=409,
+                detail="Source video file is unavailable. Re-upload the video before retrying.",
+            )
         video_id = old_job.video_id
         video_name = old_job.video.filename if old_job.video else None
     finally:
@@ -113,7 +137,7 @@ def retry_job(job_id: str):
 
     new_job = create_job(video_id, "full_pipeline")
     thread = threading.Thread(
-        target=run_full_pipeline, args=(new_job.id, video_id), daemon=True
+        target=_run_job_safely, args=(new_job.id, video_id), daemon=True
     )
     thread.start()
 

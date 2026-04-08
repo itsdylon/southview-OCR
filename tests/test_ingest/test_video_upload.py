@@ -61,6 +61,29 @@ class TestUploadVideo:
         second = upload_video(tiny_mp4)
         assert first.id == second.id
 
+    def test_upload_duplicate_restores_missing_source_file(self, tmp_db, tmp_config, tiny_mp4):
+        """If a deduped video's source file was cleaned up, duplicate upload restores it."""
+        first = upload_video(tiny_mp4)
+        original_path = Path(first.filepath)
+        assert original_path.exists()
+
+        session = get_session()
+        try:
+            video = session.query(Video).get(first.id)
+            video.filepath = None
+            video.status = "completed"
+            session.commit()
+        finally:
+            session.close()
+
+        original_path.unlink()
+        assert not original_path.exists()
+
+        second = upload_video(tiny_mp4)
+        assert second.id == first.id
+        assert second.filepath
+        assert Path(second.filepath).exists()
+
     def test_upload_nonexistent_file_raises(self, tmp_db, tmp_config):
         """FileNotFoundError when the source path doesn't exist."""
         with pytest.raises(FileNotFoundError):

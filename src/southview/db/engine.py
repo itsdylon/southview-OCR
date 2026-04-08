@@ -46,6 +46,8 @@ def init_db(db_path: str | Path) -> Engine:
 
     # migrations: make videos.filepath nullable (SQLite requires table rebuild)
     _migrate_filepath_nullable(engine)
+    # migrations: add newly supported structured OCR columns
+    _migrate_ocr_results_structured_columns(engine)
 
     return _ENGINE
 
@@ -83,6 +85,53 @@ def _migrate_filepath_nullable(engine: Engine) -> None:
             conn.exec_driver_sql("INSERT INTO videos SELECT * FROM videos_new")
             conn.exec_driver_sql("DROP TABLE videos_new")
             conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+            conn.commit()
+
+
+def _table_columns(conn, table_name: str) -> set[str]:
+    rows = conn.exec_driver_sql(f"PRAGMA table_info('{table_name}')").fetchall()
+    return {str(r[1]) for r in rows}
+
+
+def _migrate_ocr_results_structured_columns(engine: Engine) -> None:
+    """
+    Additive migration: ensure ocr_results contains the canonical structured fields.
+    This is idempotent and does not rewrite existing rows.
+    """
+    column_types = {
+        "deceased_name": "VARCHAR",
+        "address": "VARCHAR",
+        "owner": "VARCHAR",
+        "relation": "VARCHAR",
+        "phone": "VARCHAR",
+        "date_of_death": "VARCHAR",
+        "date_of_burial": "VARCHAR",
+        "description": "TEXT",
+        "sex": "VARCHAR",
+        "age": "VARCHAR",
+        "grave_type": "VARCHAR",
+        "grave_fee": "VARCHAR",
+        "undertaker": "VARCHAR",
+        "board_of_health_no": "VARCHAR",
+        "svc_no": "VARCHAR",
+    }
+
+    with engine.connect() as conn:
+        existing_tables = {
+            str(r[0])
+            for r in conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        if "ocr_results" not in existing_tables:
+            return
+
+        existing_columns = _table_columns(conn, "ocr_results")
+        changed = False
+        for col, sql_type in column_types.items():
+            if col in existing_columns:
+                continue
+            conn.exec_driver_sql(f"ALTER TABLE ocr_results ADD COLUMN {col} {sql_type}")
+            changed = True
+        if changed:
             conn.commit()
 
 

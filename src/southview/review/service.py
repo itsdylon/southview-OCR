@@ -8,13 +8,9 @@ from sqlalchemy.orm import joinedload
 
 from southview.config import get_config
 from southview.db.engine import get_session
-from southview.db.models import Card, OCRResult
+from southview.db.models import Card, OCRResult, STRUCTURED_OCR_FIELDS
 
-ALLOWED_STRUCTURED_FIELDS = {
-    "deceased_name", "address", "owner", "relation", "phone",
-    "date_of_death", "date_of_burial", "description", "sex", "age",
-    "grave_type", "grave_fee", "undertaker", "board_of_health_no", "svc_no",
-}
+ALLOWED_STRUCTURED_FIELDS = set(STRUCTURED_OCR_FIELDS)
 
 
 def _parse_status_in(status_in: str | None) -> list[str] | None:
@@ -102,20 +98,19 @@ def list_cards(
         rows: list[dict[str, Any]] = []
         for c in cards:
             r = c.ocr_result
-            rows.append(
-                {
-                    "card_id": c.id,
-                    "video_id": c.video_id,
-                    "sequence_index": c.sequence_index,
-                    "frame_number": c.frame_number,
-                    "image_path": c.image_path,
-                    "review_status": r.review_status if r else None,
-                    "confidence_score": float(r.confidence_score) if r else None,
-                    "deceased_name": r.deceased_name if r else None,
-                    "date_of_death": r.date_of_death if r else None,
-                    "error_message": getattr(r, "error_message", None) if r else None,
-                }
-            )
+            row = {
+                "card_id": c.id,
+                "video_id": c.video_id,
+                "sequence_index": c.sequence_index,
+                "frame_number": c.frame_number,
+                "image_path": c.image_path,
+                "review_status": r.review_status if r else None,
+                "confidence_score": float(r.confidence_score) if r else None,
+                "error_message": getattr(r, "error_message", None) if r else None,
+            }
+            for field in STRUCTURED_OCR_FIELDS:
+                row[field] = getattr(r, field, None) if r else None
+            rows.append(row)
 
         pages = max(1, -(-total // per_page))  # ceiling division
         return {
@@ -152,9 +147,8 @@ def get_card_detail(card_id: str) -> dict[str, Any]:
             "review_status": r.review_status,
             "reviewed_by": r.reviewed_by,
             "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
-            "deceased_name": r.deceased_name,
-            "date_of_death": r.date_of_death,
             "error_message": getattr(r, "error_message", None),
+            **{field: getattr(r, field, None) for field in STRUCTURED_OCR_FIELDS},
         }
     finally:
         session.close()
@@ -186,10 +180,14 @@ def submit_review(
         if not r:
             raise ValueError(f"OCR result not found for card: {card_id}")
 
+        has_structured_updates = bool(structured_fields)
+        has_dict_updates = bool(fields)
+        has_any_updates = has_dict_updates or has_structured_updates
+
         # validate edit rules
-        if fields and status != "corrected":
+        if has_any_updates and status != "corrected":
             raise ValueError("If fields are provided, status must be 'corrected'")
-        if (not fields) and status != "approved":
+        if (not has_any_updates) and status != "approved":
             raise ValueError("If no fields are provided, status must be 'approved'")
 
         # apply edits
@@ -216,8 +214,7 @@ def submit_review(
             "review_status": r.review_status,
             "reviewed_by": r.reviewed_by,
             "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
-            "deceased_name": r.deceased_name,
-            "date_of_death": r.date_of_death,
+            **{field: getattr(r, field, None) for field in STRUCTURED_OCR_FIELDS},
         }
     finally:
         session.close()

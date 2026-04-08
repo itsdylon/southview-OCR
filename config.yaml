@@ -21,7 +21,15 @@ frame_extraction:
   db_insert_batch_size: 500     # Commit Card inserts in batches to scale to large jobs
 
 ocr:
-  engine: tesseract
+  engine: gemini
+  gemini:
+    model: gemini-2.5-flash
+    api_key_env: GEMINI_API_KEY
+    endpoint: https://generativelanguage.googleapis.com/v1beta
+    timeout_seconds: 30
+    try_rotations: false
+    rotation_mode: all   # all | sideways | none
+    structured_fallback: true
   tesseract:
     oem: 1          # LSTM neural net
     psm: 4          # Single uniform block of text

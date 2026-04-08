@@ -386,6 +386,32 @@ def parse_owner_name_from_words(words: List[Dict[str, Any]]) -> Tuple[Optional[s
     return (top_text or None), lines[0]
 
 
+def parse_owner_name_from_text(raw_text: str) -> Optional[str]:
+    if not raw_text:
+        return None
+
+    lines = [re.sub(r"\s+", " ", ln).strip() for ln in raw_text.splitlines() if ln.strip()]
+    if not lines:
+        return None
+
+    for ln in lines[:6]:
+        candidate = _strip_address_tail(ln).strip(" ,")
+        if not candidate:
+            continue
+        if _looks_like_label_line(candidate):
+            continue
+        if not re.search(r"[A-Za-z]", candidate):
+            continue
+        # Prefer the classic LAST, First form.
+        if "," in candidate:
+            return standardize_owner_name_keep_suffix(candidate) or candidate
+
+    first = _strip_address_tail(lines[0]).strip(" ,")
+    if first and (not _looks_like_label_line(first)):
+        return standardize_owner_name_keep_suffix(first) or first
+    return None
+
+
 # ----------------------------
 # Date of death extraction
 # ----------------------------
@@ -515,6 +541,8 @@ def parse_date_of_death_from_words(words: List[Dict[str, Any]]) -> Tuple[Optiona
 # ----------------------------
 def parse_fields_min(words: List[Dict[str, Any]], raw_text: str = "") -> Dict[str, Any]:
     owner_name, owner_ws = parse_owner_name_from_words(words)
+    if (owner_name is None or str(owner_name).strip() == "") and raw_text:
+        owner_name = parse_owner_name_from_text(raw_text)
 
     # 1) same-line death label
     dod_raw = extract_date_after_label(raw_text, label=r"\bDate\s+of\s+Death\b")
