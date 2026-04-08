@@ -1,4 +1,5 @@
 import { createBrowserRouter } from 'react-router';
+import AuthPage from './pages/auth-page';
 import OCROverviewPage from './pages/ocr-overview-page';
 import VideosPage from './pages/videos-page';
 import UploadPage from './pages/upload-page';
@@ -11,6 +12,10 @@ import ExportBackupPage from './pages/export-backup-page';
 import OCRSettingsPage from './pages/ocr-settings-page';
 
 export const router = createBrowserRouter([
+  {
+    path: '/auth',
+    Component: AuthPage,
+  },
   {
     path: '/',
     Component: OCROverviewPage,
