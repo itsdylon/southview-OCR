@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
 import { Video, Eye, EyeOff } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -13,7 +12,6 @@ import {
 } from '../components/ui/card';
 
 export default function AuthPage() {
-  const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -32,7 +30,8 @@ export default function AuthPage() {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     setIsLoading(false);
-    navigate('/');
+    // For mockup purposes - just reset form
+    alert('Authentication successful!');
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
