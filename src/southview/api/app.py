@@ -1,11 +1,14 @@
 """FastAPI application factory."""
 
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
+from southview.auth import get_authenticated_user
 from southview.config import get_config
 from southview.db.engine import init_db
 
@@ -25,11 +28,23 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def require_auth(request: Request, call_next):
+        path = request.url.path
+        if path.startswith("/api") and not path.startswith("/api/auth"):
+            try:
+                get_authenticated_user(request)
+            except Exception as exc:
+                if hasattr(exc, "status_code"):
+                    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+                raise
+        return await call_next(request)
 
     @app.on_event("startup")
     def startup():
@@ -41,7 +56,8 @@ def create_app() -> FastAPI:
     app.mount("/static/frames", StaticFiles(directory=str(frames_dir)), name="frames")
 
     # Import and include routers
-    from southview.api.routes import backup, cards, export, jobs, videos, stats, settings
+    from southview.api.routes import auth, backup, cards, export, jobs, videos, stats, settings
+    app.include_router(auth.router, prefix="/api")
     app.include_router(videos.router, prefix="/api")
     app.include_router(jobs.router, prefix="/api")
     app.include_router(cards.router, prefix="/api")

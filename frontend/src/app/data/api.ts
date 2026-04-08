@@ -5,6 +5,8 @@
 
 import type { Video, Job, CardWithOCR, OCRResult, ReviewStatus } from '../types/ocr';
 
+const UNAUTHORIZED_EVENT = 'southview:unauthorized';
+
 // ---------------------------------------------------------------------------
 // Error class
 // ---------------------------------------------------------------------------
@@ -24,19 +26,30 @@ export class ApiError extends Error {
 // ---------------------------------------------------------------------------
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetch(url, {
+    credentials: 'include',
+    ...init,
+  });
   if (!res.ok) {
     let detail = res.statusText;
     try {
       const body = await res.json();
       detail = body.detail ?? JSON.stringify(body);
     } catch { /* ignore */ }
+    if (res.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    }
     throw new ApiError(res.status, detail);
   }
   if (res.status === 204) {
     return undefined as T;
   }
   return res.json() as Promise<T>;
+}
+
+interface SessionResponse {
+  authenticated: boolean;
+  username: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +306,7 @@ export async function uploadVideo(file: File): Promise<{ video: Video; xhr: XMLH
     formData.append('file', file);
 
     xhr.open('POST', '/api/videos/upload');
+    xhr.withCredentials = true;
 
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
@@ -319,6 +333,9 @@ export async function uploadVideo(file: File): Promise<{ video: Video; xhr: XMLH
           const body = JSON.parse(xhr.responseText);
           detail = body.detail ?? detail;
         } catch { /* ignore */ }
+        if (xhr.status === 401 && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+        }
         reject(new ApiError(xhr.status, detail));
       }
     };
@@ -348,6 +365,7 @@ export function uploadVideoWithProgress(
     };
 
     xhr.open('POST', '/api/videos/upload');
+    xhr.withCredentials = true;
 
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
@@ -373,6 +391,9 @@ export function uploadVideoWithProgress(
           const body = JSON.parse(xhr.responseText);
           detail = body.detail ?? detail;
         } catch { /* ignore */ }
+        if (xhr.status === 401 && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+        }
         reject(new ApiError(xhr.status, detail));
       }
     };
@@ -493,7 +514,7 @@ export async function downloadExport(
   if (videoId) params.set('video_id', videoId);
   if (status) params.set('status', status);
 
-  const res = await fetch(`/api/export?${params.toString()}`);
+  const res = await fetch(`/api/export?${params.toString()}`, { credentials: 'include' });
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -503,6 +524,9 @@ export async function downloadExport(
       try {
         detail = await res.text();
       } catch { /* ignore */ }
+    }
+    if (res.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
     }
     throw new ApiError(res.status, detail);
   }
@@ -529,4 +553,28 @@ export async function fetchBackups(): Promise<
   Array<{ filename: string; created_at: string; size_bytes: number }>
 > {
   return apiFetch('/api/backups');
+}
+
+export async function fetchSession(): Promise<SessionResponse> {
+  return apiFetch<SessionResponse>('/api/auth/session');
+}
+
+export async function login(username: string, password: string): Promise<SessionResponse> {
+  return apiFetch<SessionResponse>('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function logout(): Promise<void> {
+  await apiFetch('/api/auth/logout', { method: 'POST' });
+}
+
+export function subscribeToUnauthorized(handler: () => void): () => void {
+  if (typeof window === 'undefined') {
+    return () => {};
+  }
+  window.addEventListener(UNAUTHORIZED_EVENT, handler);
+  return () => window.removeEventListener(UNAUTHORIZED_EVENT, handler);
 }

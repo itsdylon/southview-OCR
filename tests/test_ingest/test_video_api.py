@@ -1,5 +1,6 @@
 """API integration tests for video endpoints."""
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -7,18 +8,31 @@ from fastapi.testclient import TestClient
 import pytest
 
 from southview.api.app import create_app
+from southview.auth import hash_password
 
 
 @pytest.fixture
 def client(tmp_path, tmp_db, tmp_config):
     """TestClient wired to a temp database and storage directories."""
     config = tmp_config
+    auth_env = {
+        "SOUTHVIEW_AUTH_USERNAME": "admin",
+        "SOUTHVIEW_AUTH_PASSWORD_HASH": hash_password("test-password"),
+        "SOUTHVIEW_AUTH_SESSION_SECRET": "test-session-secret",
+        "SOUTHVIEW_AUTH_SECURE_COOKIES": "false",
+    }
     # Patch the app-level init_db/get_config as well so the startup event
     # doesn't overwrite our temp DB configuration.
-    with patch("southview.api.app.init_db"), \
+    with patch.dict(os.environ, auth_env, clear=False), \
+         patch("southview.api.app.init_db"), \
          patch("southview.api.app.get_config", return_value=config):
         app = create_app()
         with TestClient(app) as c:
+            login_response = c.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "test-password"},
+            )
+            assert login_response.status_code == 200
             yield c
 
 
