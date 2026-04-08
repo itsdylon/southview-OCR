@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 
-from southview.export.exporter import export_csv, export_json
+from southview.export.exporter import export_csv, export_json, has_export_rows
 from southview.export.service import export_approved_cards_zip
 
 router = APIRouter(tags=["export"])
@@ -11,17 +11,25 @@ router = APIRouter(tags=["export"])
 
 @router.get("/export")
 def export_data(
-    format: str = Query("csv", regex="^(csv|json)$"),
+    format: str = Query("csv", pattern="^(csv|json)$"),
     video_id: str | None = Query(None),
     status: str | None = Query(None),
 ):
     """Export card data as CSV or JSON."""
+    if not has_export_rows(video_id=video_id, status=status):
+        raise HTTPException(status_code=404, detail="No exportable records found for the selected filters.")
+
+    media_type = "application/json" if format == "json" else "text/csv; charset=utf-8"
+    suffix = "json" if format == "json" else "csv"
     if format == "json":
         data = export_json(video_id=video_id, status=status)
-        return Response(content=data, media_type="application/json")
     else:
         data = export_csv(video_id=video_id, status=status)
-        return Response(content=data, media_type="text/csv")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="southview_export.{suffix}"',
+    }
+    return Response(content=data, media_type=media_type, headers=headers)
 
 
 @router.get("/export/video/{video_id}")

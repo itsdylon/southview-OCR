@@ -24,19 +24,23 @@ import type { OCRResult } from '../types/ocr';
 export default function OCRReviewVerifyPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { cards, updateCardFields, updateCardStatus } = useCardStore();
+  const { cards, updateCardFields, updateCardStatus, deleteCard } = useCardStore();
   const card = cards.find((c) => c.id === id);
 
   const [zoom, setZoom] = useState(1);
-  const [rotation, setRotation] = useState(0);
+  const [rotation, setRotation] = useState(card?.ocrResult?.rotationDegrees || 0);
   const [formData, setFormData] = useState<Partial<OCRResult>>(card?.ocrResult || {});
   const [showRawOCR, setShowRawOCR] = useState(false);
 
   const editableFields: (keyof OCRResult)[] = [
-    'deceased_name', 'address', 'owner', 'relation', 'phone',
-    'date_of_death', 'date_of_burial', 'description',
-    'sex', 'age', 'grave_type', 'grave_fee', 'undertaker',
-    'board_of_health_no', 'svc_no',
+    'deceased_name',
+    'date_of_death',
+    'date_of_burial',
+    'description',
+    'sex',
+    'age',
+    'undertaker',
+    'svc_no',
   ];
 
   const hasEdits = useMemo(() => {
@@ -53,7 +57,7 @@ export default function OCRReviewVerifyPage() {
     const current = cards.find((c) => c.id === id);
     setFormData(current?.ocrResult || {});
     setZoom(1);
-    setRotation(0);
+    setRotation(current?.ocrResult?.rotationDegrees || 0);
     setShowRawOCR(false);
   }, [id, cards]);
 
@@ -120,6 +124,22 @@ export default function OCRReviewVerifyPage() {
     updateCardStatus(card.id, 'flagged');
     toast.warning('Card flagged for priority review');
     navigateNext();
+  };
+
+  const handleDeleteRecord = async () => {
+    const label = card.ocrResult?.deceased_name || `Frame #${card.frameNumber}`;
+    if (!window.confirm(`Delete record "${label}"?`)) {
+      return;
+    }
+
+    try {
+      await deleteCard(card.id);
+      toast.success('Record deleted', { description: label });
+      navigateNext();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete record';
+      toast.error('Delete failed', { description: message });
+    }
   };
   
   return (
@@ -194,6 +214,12 @@ export default function OCRReviewVerifyPage() {
               <Flag className="w-4 h-4" />
               Flag <span className="text-xs opacity-75">(F)</span>
             </button>
+            <button
+              onClick={() => void handleDeleteRecord()}
+              className="flex items-center gap-2 px-4 py-2 border border-red-200 text-red-700 rounded-lg hover:bg-red-50 transition-colors"
+            >
+              Delete Record
+            </button>
           </div>
         </div>
         
@@ -234,15 +260,16 @@ export default function OCRReviewVerifyPage() {
             </div>
             
             {/* Image */}
-            <div className="flex-1 bg-gray-100 rounded-lg overflow-auto flex items-center justify-center">
+            <div className="flex-1 bg-gray-100 rounded-lg overflow-auto flex items-center justify-center p-4">
               <img
                 src={card.imagePath}
                 alt="Card scan"
                 style={{
                   transform: `scale(${zoom}) rotate(${rotation}deg)`,
+                  transformOrigin: 'center center',
                   transition: 'transform 0.2s ease',
                 }}
-                className="max-w-full h-auto"
+                className="max-w-full max-h-full w-auto h-auto object-contain"
               />
             </div>
           </div>
@@ -251,37 +278,13 @@ export default function OCRReviewVerifyPage() {
           <div className="w-1/2 overflow-y-auto">
             <div className="p-6">
               {/* Form Sections */}
-              <Accordion.Root type="multiple" defaultValue={['header', 'ownership', 'dates', 'details']}>
+              <Accordion.Root type="multiple" defaultValue={['header', 'dates', 'location', 'details', 'full-text']}>
                 {/* Header Section */}
                 <AccordionSection value="header" title="Header Information">
                   <FormField
                     label="Deceased Name"
                     value={formData.deceased_name || ''}
                     onChange={(v) => handleFieldChange('deceased_name', v)}
-                  />
-                  <FormField
-                    label="Address"
-                    value={formData.address || ''}
-                    onChange={(v) => handleFieldChange('address', v)}
-                  />
-                </AccordionSection>
-                
-                {/* Ownership Section */}
-                <AccordionSection value="ownership" title="Ownership Information">
-                  <FormField
-                    label="Owner"
-                    value={formData.owner || ''}
-                    onChange={(v) => handleFieldChange('owner', v)}
-                  />
-                  <FormField
-                    label="Relation"
-                    value={formData.relation || ''}
-                    onChange={(v) => handleFieldChange('relation', v)}
-                  />
-                  <FormField
-                    label="Phone"
-                    value={formData.phone || ''}
-                    onChange={(v) => handleFieldChange('phone', v)}
                   />
                 </AccordionSection>
                 
@@ -325,31 +328,28 @@ export default function OCRReviewVerifyPage() {
                     />
                   </div>
                   <FormField
-                    label="Grave Type"
-                    value={formData.grave_type || ''}
-                    onChange={(v) => handleFieldChange('grave_type', v)}
-                  />
-                  <FormField
-                    label="Grave Fee"
-                    value={formData.grave_fee || ''}
-                    onChange={(v) => handleFieldChange('grave_fee', v)}
-                  />
-                  <FormField
                     label="Undertaker"
                     value={formData.undertaker || ''}
                     onChange={(v) => handleFieldChange('undertaker', v)}
                   />
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      label="Board of Health No."
-                      value={formData.board_of_health_no || ''}
-                      onChange={(v) => handleFieldChange('board_of_health_no', v)}
-                    />
-                    <FormField
-                      label="SVC No."
-                      value={formData.svc_no || ''}
-                      onChange={(v) => handleFieldChange('svc_no', v)}
-                    />
+                  <FormField
+                    label="SVC No."
+                    value={formData.svc_no || ''}
+                    onChange={(v) => handleFieldChange('svc_no', v)}
+                  />
+                </AccordionSection>
+
+                <AccordionSection value="full-text" title="Full Text / Additional Details">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Full OCR Text
+                    </label>
+                    <p className="text-xs text-gray-500 mb-3">
+                      Use this when a field is missing or questionable. The text stays read-only so edits stay focused on the structured record.
+                    </p>
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm font-mono text-gray-700 whitespace-pre-wrap min-h-[220px] max-h-[360px] overflow-y-auto">
+                      {card.ocrResult.rawText || 'No OCR text available'}
+                    </div>
                   </div>
                 </AccordionSection>
               </Accordion.Root>
@@ -368,22 +368,12 @@ export default function OCRReviewVerifyPage() {
                   )}
                 </button>
                 {showRawOCR && (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Raw Text
-                      </label>
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm font-mono text-gray-700 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                        {card.ocrResult.rawText}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Raw Fields JSON
-                      </label>
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm font-mono text-gray-700 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                        {card.ocrResult.rawFieldsJson}
-                      </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Raw Fields JSON
+                    </label>
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm font-mono text-gray-700 whitespace-pre-wrap max-h-40 overflow-y-auto">
+                      {card.ocrResult.rawFieldsJson || 'No structured fallback payload captured'}
                     </div>
                   </div>
                 )}

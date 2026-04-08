@@ -122,6 +122,14 @@ def _iso_to_dt(iso: str) -> Optional[datetime]:
         return None
 
 
+def _normalize_two_digit_year(year: int) -> int:
+    if year >= 100:
+        return year
+    # These burial cards are historical records, so 2-digit years should
+    # default to the 1900s rather than rolling into the 2000s.
+    return 1900 + year
+
+
 def standardize_date_to_iso(s: str) -> Optional[str]:
     if not s:
         return None
@@ -139,8 +147,7 @@ def standardize_date_to_iso(s: str) -> Optional[str]:
             return None
         day = int(m.group(2))
         year = int(m.group(3))
-        if year < 100:
-            year = 1900 + year if year >= 50 else 2000 + year
+        year = _normalize_two_digit_year(year)
         try:
             return datetime(year, mon, day).strftime("%Y-%m-%d")
         except ValueError:
@@ -149,8 +156,7 @@ def standardize_date_to_iso(s: str) -> Optional[str]:
     m = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b", t)
     if m:
         mon, day, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        if year < 100:
-            year = 1900 + year if year >= 50 else 2000 + year
+        year = _normalize_two_digit_year(year)
         try:
             return datetime(year, mon, day).strftime("%Y-%m-%d")
         except ValueError:
@@ -237,7 +243,13 @@ def standardize_owner_name_keep_suffix(s: str) -> Optional[str]:
 
 
 def _looks_like_label_line(s: str) -> bool:
-    return bool(re.search(r"\b(date|death|burial|birth|owner|relation|contact|information|description|svc|sex|age|undertaker)\b", s, re.I))
+    return bool(
+        re.search(
+            r"\b(date|death|burial|birth|owner|relation|contact|information|description|svc|sex|age|undertaker|grave\s*fee|type\s+of\s+grave|board\s+of\s+health)\b",
+            s,
+            re.I,
+        )
+    )
 
 
 def _strip_address_tail(s: str) -> str:
@@ -386,6 +398,347 @@ def parse_owner_name_from_words(words: List[Dict[str, Any]]) -> Tuple[Optional[s
     return (top_text or None), lines[0]
 
 
+def parse_owner_name_from_text(raw_text: str) -> Optional[str]:
+    if not raw_text:
+        return None
+
+    lines = [re.sub(r"\s+", " ", ln).strip() for ln in raw_text.splitlines() if ln.strip()]
+    if not lines:
+        return None
+
+    for line in lines[:5]:
+        candidate = _remove_parenthetical_titles(_strip_address_tail(line))
+        if not candidate or _looks_like_label_line(candidate):
+            continue
+
+        lower = candidate.lower()
+        if "c/o" in lower or "estate" in lower:
+            continue
+
+        if "," in candidate:
+            return candidate.strip().rstrip(",")
+
+    first = _remove_parenthetical_titles(_strip_address_tail(lines[0]))
+    return first.strip().rstrip(",") or None
+
+
+def _lines(raw_text: str) -> List[str]:
+    return [re.sub(r"\s+", " ", ln).strip() for ln in raw_text.splitlines() if ln.strip()]
+
+
+def _find_line_after_label(
+    lines: List[str],
+    label_pattern: str,
+    max_lookahead: int = 3,
+    skip_patterns: List[str] | None = None,
+    stop_on_label: bool = False,
+) -> Optional[str]:
+    rx = re.compile(label_pattern, re.IGNORECASE)
+    skip_res = [re.compile(p, re.IGNORECASE) for p in (skip_patterns or [])]
+    for i, line in enumerate(lines):
+        m = rx.search(line)
+        if not m:
+            continue
+
+        tail = line[m.end():].strip(" :-")
+        if tail and not any(sr.search(tail) for sr in skip_res):
+            return tail
+
+        for j in range(i + 1, min(len(lines), i + 1 + max_lookahead)):
+            candidate = lines[j].strip()
+            if not candidate:
+                continue
+            if stop_on_label and _looks_like_label_line(candidate):
+                break
+            if any(sr.search(candidate) for sr in skip_res):
+                continue
+            if not _looks_like_label_line(candidate):
+                return candidate
+    return None
+
+
+def _find_line_before_label(
+    lines: List[str],
+    label_pattern: str,
+    max_lookbehind: int = 2,
+    skip_patterns: List[str] | None = None,
+) -> Optional[str]:
+    rx = re.compile(label_pattern, re.IGNORECASE)
+    skip_res = [re.compile(p, re.IGNORECASE) for p in (skip_patterns or [])]
+    for i, line in enumerate(lines):
+        if not rx.search(line):
+            continue
+
+        for j in range(i - 1, max(-1, i - 1 - max_lookbehind), -1):
+            candidate = lines[j].strip()
+            if not candidate:
+                continue
+            if any(sr.search(candidate) for sr in skip_res):
+                continue
+            if _looks_like_label_line(candidate):
+                break
+            return candidate
+    return None
+
+
+def _collect_lines_after_label(
+    lines: List[str],
+    label_pattern: str,
+    max_lookahead: int = 4,
+    skip_patterns: List[str] | None = None,
+) -> List[str]:
+    rx = re.compile(label_pattern, re.IGNORECASE)
+    skip_res = [re.compile(p, re.IGNORECASE) for p in (skip_patterns or [])]
+    for i, line in enumerate(lines):
+        m = rx.search(line)
+        if not m:
+            continue
+
+        out: List[str] = []
+        tail = line[m.end():].strip(" :-")
+        if tail and not any(sr.search(tail) for sr in skip_res):
+            out.append(tail)
+
+        for j in range(i + 1, min(len(lines), i + 1 + max_lookahead)):
+            candidate = lines[j].strip()
+            if not candidate:
+                continue
+            if any(sr.search(candidate) for sr in skip_res):
+                continue
+            if _looks_like_label_line(candidate):
+                break
+            out.append(candidate)
+
+        return out
+    return []
+
+
+def _find_address_from_text(lines: List[str]) -> Optional[str]:
+    for line in lines[:8]:
+        lower = line.lower()
+        if "date of" in lower or "relation" in lower or "description" in lower or "ph#" in lower:
+            continue
+        if _extract_date_string(line):
+            continue
+        if re.search(r"\b\d{2,6}\b", line):
+            cleaned = re.sub(r"^\s*ph#?.*$", "", line, flags=re.IGNORECASE).strip()
+            if cleaned:
+                return cleaned
+    return None
+
+
+def _extract_phone_from_text(raw_text: str) -> Optional[str]:
+    m = re.search(r"(\(?\d{3}\)?\s*[-./]?\s*\d{3}\s*[-./]?\s*\d{4})", raw_text)
+    return m.group(1) if m else None
+
+
+def _extract_date_from_label(lines: List[str], label_pattern: str) -> Optional[str]:
+    candidates = _collect_lines_after_label(
+        lines,
+        label_pattern,
+        skip_patterns=[r"\bdob\b", r"\bdate\s+of\s+birth\b"],
+    )
+    for text in candidates:
+        trimmed = re.split(
+            r"\b(date\s+of\s+death|date\s+of\s+burial|burial|date\s+of\s+birth|dob)\b",
+            text,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip()
+        if not trimmed:
+            continue
+        d = _extract_date_string(trimmed)
+        if d:
+            iso = standardize_date_to_iso(d)
+            if iso:
+                return iso
+    return None
+
+
+def _extract_unlabeled_dates_before_dob(lines: List[str]) -> tuple[Optional[str], Optional[str]]:
+    dob_index = None
+    for i, line in enumerate(lines):
+        if re.search(r"\bdob\b|\bdate\s+of\s+birth\b", line, re.IGNORECASE):
+            dob_index = i
+            break
+
+    if dob_index is None:
+        return None, None
+
+    candidates: list[str] = []
+    for line in lines[:dob_index]:
+        text = line.strip()
+        if not text or _looks_like_label_line(text):
+            continue
+        if _extract_phone_from_text(text):
+            continue
+        d = _extract_date_string(text)
+        if not d:
+            continue
+        iso = standardize_date_to_iso(d)
+        if iso:
+            candidates.append(iso)
+
+    if len(candidates) >= 2:
+        first = candidates[-2]
+        second = candidates[-1]
+        if first == second:
+            # If OCR duplicated the same unlabeled date twice, treat it as a
+            # likely burial-only signal rather than populating both fields
+            # with the same wrong value.
+            return None, second
+        return first, second
+    if len(candidates) == 1:
+        return candidates[0], None
+    return None, None
+
+
+def _extract_inline_date_after_label(line: str, label_pattern: str, stop_pattern: str | None = None) -> Optional[str]:
+    rx = re.compile(label_pattern, re.IGNORECASE)
+    m = rx.search(line)
+    if not m:
+        return None
+
+    tail = line[m.end():].strip()
+    if stop_pattern:
+        tail = re.split(stop_pattern, tail, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+
+    d = _extract_date_string(tail)
+    if not d:
+        return None
+    return standardize_date_to_iso(d)
+
+
+def _extract_description(lines: List[str]) -> Optional[str]:
+    parts = _collect_lines_after_label(lines, r"\bdescription\b", max_lookahead=5)
+    if not parts:
+        location_lines: List[str] = []
+        for line in lines:
+            lower = line.lower()
+            if _looks_like_label_line(line) and not re.search(r"\b(direction|section|lot|range|grave|block)\b", lower):
+                continue
+            if re.fullmatch(r"direction\s*:?", lower):
+                continue
+            if re.search(r"\b(lot|range|grave|section|block|direction|northside|southside|eastside|westside)\b", lower):
+                if line not in location_lines:
+                    location_lines.append(line)
+        if location_lines:
+            return " ".join(location_lines).strip() or None
+        return None
+    return " ".join(parts).strip() or None
+
+
+def _extract_simple_field(raw_text: str, pattern: str, group: int = 1) -> Optional[str]:
+    m = re.search(pattern, raw_text, re.IGNORECASE)
+    if not m:
+        return None
+    value = m.group(group).strip()
+    return value or None
+
+
+def _extract_unlabeled_svc_no(lines: List[str]) -> Optional[str]:
+    for i, line in enumerate(lines):
+        if not re.search(r"\bgrave\s*fee\b", line, re.IGNORECASE):
+            continue
+        for j in range(i + 1, min(len(lines), i + 4)):
+            candidate = lines[j].strip()
+            if not candidate:
+                continue
+            if _looks_like_label_line(candidate):
+                continue
+            if re.fullmatch(r"[0-9]{1,3}(?:,[0-9]{3})+", candidate) or re.fullmatch(r"[0-9]{3,}", candidate):
+                return candidate
+    return None
+
+
+def _clean_undertaker(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    value = re.sub(r"\s+", " ", value).strip(" :-")
+    if not value:
+        return None
+    if value.lower() in {"grave", "fee", "sex", "age", "type", "description", "owner", "relation"}:
+        return None
+    if _looks_like_label_line(value):
+        return None
+    if _extract_date_string(value):
+        return None
+    return value
+
+
+def parse_fields_from_text(raw_text: str) -> Dict[str, Dict[str, Any]]:
+    lines = _lines(raw_text)
+    owner_name = parse_owner_name_from_text(raw_text)
+    address = _find_address_from_text(lines)
+    owner = _find_line_after_label(
+        lines,
+        r"\bc\/o\b",
+        skip_patterns=[r"^\s*owner\s*$"],
+        stop_on_label=True,
+    ) or _find_line_after_label(lines, r"\bowner\b", stop_on_label=True)
+    relation = _find_line_after_label(lines, r"\brelation\b", stop_on_label=True)
+    phone = _extract_phone_from_text(raw_text)
+    date_of_death = parse_date_of_death_from_text(raw_text)
+    if not date_of_death:
+        date_of_death = _extract_date_from_label(lines, r"\bdate\s+of\s+death\b")
+    date_of_burial = _extract_date_from_label(lines, r"\bdate\s+of\s+burial\b|\bburial\b")
+    if not date_of_death and not date_of_burial:
+        unlabeled_dod, unlabeled_doburial = _extract_unlabeled_dates_before_dob(lines)
+        date_of_death = unlabeled_dod
+        date_of_burial = unlabeled_doburial
+    description = _extract_description(lines)
+    sex = _extract_simple_field(raw_text, r"\bsex\b\s*:?\s*([MF])\b")
+    age = _extract_simple_field(raw_text, r"\bage\b\s*:?\s*([0-9]{1,3})\b")
+    grave_type = _find_line_after_label(lines, r"\btype\s+of\s+grave\b", stop_on_label=True)
+    if not grave_type:
+        grave_type = _extract_simple_field(
+            raw_text,
+            r"\btype\s+of\s+grave\b\s*:?\s*(.*?)(?=\bgrave\s*fee\b|\bundertaker\b|\bsvc\b|$)",
+        )
+    grave_fee = _extract_simple_field(raw_text, r"\bgrave\s*fee\b\s*:?\s*\$?\s*([0-9]{2,4}(?:\.[0-9]{2})?)")
+    undertaker = _find_line_after_label(lines, r"\bundertaker\b", stop_on_label=True)
+    if not undertaker:
+        undertaker = _find_line_before_label(
+            lines,
+            r"\bundertaker\b",
+            skip_patterns=[r"\bboard\s+of\s+health\b", r"\bdate\s+of\b"],
+        )
+    board_of_health_no = _find_line_after_label(lines, r"\bboard\s+of\s+health\s+no\.?\b")
+    svc_no = _find_line_after_label(lines, r"\bsvc\s+no\.?\b") or _extract_simple_field(raw_text, r"\bsvc\s+no\.?\b\s*:?\s*([A-Za-z0-9,-]+)")
+    if not svc_no:
+        svc_no = _extract_unlabeled_svc_no(lines)
+
+    if grave_type:
+        grave_type = re.sub(r"\s+", " ", grave_type).strip(" :-")
+        if _looks_like_label_line(grave_type):
+            grave_type = None
+    if description:
+        description = re.sub(r"\s+", " ", description).strip(" :-")
+    undertaker = _clean_undertaker(undertaker)
+    if svc_no and board_of_health_no == svc_no:
+        board_of_health_no = None
+    if svc_no:
+        svc_no = re.sub(r"[^0-9A-Za-z,-]", "", svc_no)
+
+    return {
+        "owner_name": {"value": owner_name, "support": []},
+        "owner_address": {"value": address, "support": []},
+        "care_of": {"value": owner, "support": []},
+        "relation": {"value": relation, "support": []},
+        "phone": {"value": phone, "support": []},
+        "date_of_death": {"value": date_of_death, "support": []},
+        "date_of_burial": {"value": date_of_burial, "support": []},
+        "description": {"value": description, "support": []},
+        "sex": {"value": sex, "support": []},
+        "age": {"value": age, "support": []},
+        "type_of_grave": {"value": grave_type, "support": []},
+        "grave_fee": {"value": grave_fee, "support": []},
+        "undertaker": {"value": undertaker, "support": []},
+        "board_of_health_no": {"value": board_of_health_no, "support": []},
+        "svc_no": {"value": svc_no, "support": []},
+    }
+
+
 # ----------------------------
 # Date of death extraction
 # ----------------------------
@@ -421,60 +774,45 @@ def extract_date_after_label(raw_text: str, *, label: str) -> Optional[str]:
 
 
 def parse_date_of_death_from_text(raw_text: str) -> Optional[str]:
-    """
-    Better handling for Barbara-like lines:
-      "Date of Death Date of Burial October 30,2021"
-      next line: "October 16, 2021"
-    Heuristic:
-      - collect candidate dates from (a) the death-label line, and (b) next 1-2 lines
-      - if we got 2+ candidates, return the LATEST date (matches your Barbara gt)
-    """
     if not raw_text:
         return None
 
     lines = [_normalize_ocr_date_noise(x) for x in raw_text.splitlines() if x.strip()]
     death_rx = re.compile(r"\bdate\s+of\s+death\b", re.IGNORECASE)
-    stop_rx = re.compile(r"\b(date\s+of\s+birth|dob|undertaker|svc|description|sex|age)\b", re.IGNORECASE)
+    hard_stop_rx = re.compile(
+        r"\b(date\s+of\s+burial|burial|date\s+of\s+birth|dob|undertaker|svc|description|sex|age)\b",
+        re.IGNORECASE,
+    )
 
     for i, ln in enumerate(lines):
-        if not death_rx.search(ln):
+        m = death_rx.search(ln)
+        if not m:
             continue
 
-        cands: List[str] = []
+        same_line_iso = _extract_inline_date_after_label(
+            ln,
+            r"\bdate\s+of\s+death\b",
+            stop_pattern=r"\b(date\s+of\s+burial|burial|date\s+of\s+birth|dob)\b",
+        )
+        if same_line_iso:
+            return same_line_iso
 
-        # same-line: look for a date anywhere after "Date of Death"
-        tail = ln[death_rx.search(ln).end():].strip()
-        d1 = _extract_date_string(tail)
-        iso1 = standardize_date_to_iso(d1) if d1 else None
-        if iso1:
-            cands.append(iso1)
-
-        # next 1-2 lines
-        for j in range(i + 1, min(i + 3, len(lines))):
-            if stop_rx.search(lines[j]):
-                break
-            d2 = _extract_date_string(lines[j])
-            iso2 = standardize_date_to_iso(d2) if d2 else None
-            if iso2:
-                cands.append(iso2)
-
-        if not cands:
+        tail = ln[m.end():].strip()
+        if re.search(r"\b(date\s+of\s+burial|burial)\b", tail, re.IGNORECASE):
             return None
 
-        if len(cands) == 1:
-            return cands[0]
-
-        # pick latest
-        best = None
-        best_dt = None
-        for iso in cands:
-            dt = _iso_to_dt(iso)
-            if dt is None:
+        for j in range(i + 1, min(i + 4, len(lines))):
+            candidate = lines[j].strip()
+            if not candidate:
                 continue
-            if best_dt is None or dt > best_dt:
-                best_dt = dt
-                best = iso
-        return best or cands[0]
+            if hard_stop_rx.search(candidate):
+                break
+            d = _extract_date_string(candidate)
+            iso = standardize_date_to_iso(d) if d else None
+            if iso:
+                return iso
+
+        return None
 
     return None
 
@@ -514,7 +852,12 @@ def parse_date_of_death_from_words(words: List[Dict[str, Any]]) -> Tuple[Optiona
 # main minimal parser
 # ----------------------------
 def parse_fields_min(words: List[Dict[str, Any]], raw_text: str = "") -> Dict[str, Any]:
+    if not words and raw_text:
+        return parse_fields_from_text(raw_text)
+
     owner_name, owner_ws = parse_owner_name_from_words(words)
+    if owner_name is None:
+        owner_name = parse_owner_name_from_text(raw_text)
 
     # 1) same-line death label
     dod_raw = extract_date_after_label(raw_text, label=r"\bDate\s+of\s+Death\b")

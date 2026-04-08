@@ -1,4 +1,4 @@
-import { useParams, Link } from 'react-router';
+import { useParams, Link, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { ArrowLeft, Play, Eye } from 'lucide-react';
 import { DashboardLayout } from '../layouts/dashboard-layout';
@@ -9,7 +9,8 @@ import { getConfidenceBand } from '../types/ocr';
 
 export default function VideoDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { getVideoById, getJobsByVideoId, getCardsByVideoId } = useMockDb();
+  const navigate = useNavigate();
+  const { getVideoById, getJobsByVideoId, getCardsByVideoId, deleteVideo, deleteCard } = useMockDb();
   const video = getVideoById(id!);
 
   if (!video) {
@@ -24,15 +25,43 @@ export default function VideoDetailPage() {
 
   const videoJobs = getJobsByVideoId(video.id);
   const videoCards = getCardsByVideoId(video.id);
-  
+
   const handleStartPipeline = () => {
     toast.success('Pipeline started', { description: `Processing ${video.filename}` });
   };
-  
+
+  const handleDeleteVideo = async () => {
+    if (!window.confirm(`Delete video "${video.filename}" and all extracted records?`)) {
+      return;
+    }
+
+    try {
+      await deleteVideo(video.id);
+      toast.success('Video deleted', { description: video.filename });
+      navigate('/videos');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete video';
+      toast.error('Delete failed', { description: message });
+    }
+  };
+
+  const handleDeleteCard = async (cardId: string, label: string) => {
+    if (!window.confirm(`Delete record "${label}"?`)) {
+      return;
+    }
+
+    try {
+      await deleteCard(cardId);
+      toast.success('Record deleted', { description: label });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete record';
+      toast.error('Delete failed', { description: message });
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="p-8 max-w-7xl mx-auto">
-        {/* Header */}
         <div className="mb-8">
           <Link
             to="/videos"
@@ -41,35 +70,52 @@ export default function VideoDetailPage() {
             <ArrowLeft className="w-4 h-4" />
             Back to Videos
           </Link>
-          <div className="flex items-start justify-between">
-            <div>
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0">
               <h1 className="text-3xl font-bold text-gray-900 mb-2">{video.filename}</h1>
-              <div className="flex items-center gap-4 text-sm text-gray-600">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-600">
                 <span>Duration: {video.duration}</span>
-                <span>•</span>
+                <span className="text-gray-300">•</span>
                 <span>Size: {video.fileSize}</span>
-                <span>•</span>
+                <span className="text-gray-300">•</span>
                 <span>Frames: {video.frameCount || 0}</span>
-                <span>•</span>
+                <span className="text-gray-300">•</span>
                 <span>Cards: {video.cardCount}</span>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <StatusChip status={video.status} size="md" />
+            <div className="flex w-full flex-col gap-3 sm:w-auto sm:min-w-[320px] sm:items-end">
+              <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm sm:justify-end">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500">
+                    Status
+                  </span>
+                  <StatusChip status={video.status} size="md" />
+                </div>
+                <button
+                  onClick={() => void handleDeleteVideo()}
+                  className="inline-flex h-11 items-center justify-center rounded-xl border border-red-200 px-4 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50"
+                >
+                  Delete Video
+                </button>
+              </div>
               {video.status === 'uploaded' && (
                 <button
                   onClick={handleStartPipeline}
-                  className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-semibold"
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 sm:min-w-[260px]"
                 >
                   <Play className="w-5 h-5" />
                   Start Full Pipeline
                 </button>
               )}
+              {video.status !== 'uploaded' && (
+                <div className="text-sm text-gray-500 sm:text-right">
+                  Pipeline actions will appear here when the video is ready to run again.
+                </div>
+              )}
             </div>
           </div>
         </div>
-        
-        {/* Job History */}
+
         <div className="mb-8">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Processing Jobs</h2>
           {videoJobs.length > 0 ? (
@@ -150,8 +196,7 @@ export default function VideoDetailPage() {
             </div>
           )}
         </div>
-        
-        {/* Cards Table */}
+
         <div>
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Extracted Cards ({videoCards.length})</h2>
           {videoCards.length > 0 ? (
@@ -199,13 +244,21 @@ export default function VideoDetailPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <Link
-                          to={`/review/${card.id}`}
-                          className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-                        >
-                          <Eye className="w-4 h-4" />
-                          Review
-                        </Link>
+                        <div className="inline-flex items-center gap-4">
+                          <Link
+                            to={`/review/${card.id}`}
+                            className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                          >
+                            <Eye className="w-4 h-4" />
+                            Review
+                          </Link>
+                          <button
+                            onClick={() => void handleDeleteCard(card.id, card.ocrResult?.deceased_name || `Frame #${card.frameNumber}`)}
+                            className="text-sm font-medium text-red-600 hover:text-red-800"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

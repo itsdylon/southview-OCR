@@ -51,6 +51,7 @@ export interface OCRResult {
   confidenceScore: number;
   rawText: string;
   rawFieldsJson: string;
+  rotationDegrees?: number;
   wordConfidences?: Record<string, number>;
   
   // Structured fields (editable)

@@ -46,6 +46,7 @@ def init_db(db_path: str | Path) -> Engine:
 
     # migrations: make videos.filepath nullable (SQLite requires table rebuild)
     _migrate_filepath_nullable(engine)
+    _migrate_ocr_results_columns(engine)
 
     return _ENGINE
 
@@ -83,6 +84,34 @@ def _migrate_filepath_nullable(engine: Engine) -> None:
             conn.exec_driver_sql("INSERT INTO videos SELECT * FROM videos_new")
             conn.exec_driver_sql("DROP TABLE videos_new")
             conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+            conn.commit()
+
+
+def _migrate_ocr_results_columns(engine: Engine) -> None:
+    """Add missing structured OCR columns for older SQLite databases."""
+    wanted = {
+        "address": "VARCHAR",
+        "owner": "VARCHAR",
+        "relation": "VARCHAR",
+        "phone": "VARCHAR",
+        "date_of_burial": "VARCHAR",
+        "description": "VARCHAR",
+        "sex": "VARCHAR",
+        "age": "VARCHAR",
+        "grave_type": "VARCHAR",
+        "grave_fee": "VARCHAR",
+        "undertaker": "VARCHAR",
+        "board_of_health_no": "VARCHAR",
+        "svc_no": "VARCHAR",
+        "rotation_degrees": "INTEGER",
+    }
+    with engine.connect() as conn:
+        rows = conn.exec_driver_sql("SELECT name FROM pragma_table_info('ocr_results')").fetchall()
+        existing = {row[0] for row in rows}
+        missing = {name: coltype for name, coltype in wanted.items() if name not in existing}
+        for name, coltype in missing.items():
+            conn.exec_driver_sql(f"ALTER TABLE ocr_results ADD COLUMN {name} {coltype}")
+        if missing:
             conn.commit()
 
 
