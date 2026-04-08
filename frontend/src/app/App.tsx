@@ -2,9 +2,22 @@ import { RouterProvider } from 'react-router';
 import { Toaster } from 'sonner';
 import { router } from './routes';
 import { MockDbProvider, useApiState } from './data/mock-db';
+import AuthPage from './pages/auth-page';
 
 function AppContent() {
   const { loading, error } = useApiState();
+
+  // Allow auth page to render without waiting for API
+  const isAuthPage = window.location.pathname === '/auth';
+  
+  if (isAuthPage) {
+    return (
+      <>
+        <AuthPage />
+        <Toaster position="top-right" richColors closeButton />
+      </>
+    );
+  }
 
   if (loading) {
     return (
