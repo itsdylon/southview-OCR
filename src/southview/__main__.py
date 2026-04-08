@@ -1,11 +1,12 @@
 """CLI entry point for Southview OCR.
 
 Usage:
-    python -m southview serve          — Start the API server
-    python -m southview upload <path>  — Upload a video
-    python -m southview process <id>   — Process a video
-    python -m southview export [opts]  — Export data
-    python -m southview backup         — Create a backup
+    python -m southview serve          - Start the API server
+    python -m southview upload <path>  - Upload a video
+    python -m southview process <id>   - Process a video
+    python -m southview export [opts]  - Export data
+    python -m southview backup         - Create a backup
+    python -m southview hash-password  - Generate a password hash
 """
 
 import sys
@@ -78,6 +79,18 @@ def main():
         init_db()
         path = create_backup()
         print(f"Backup created: {path}")
+
+    elif command == "hash-password":
+        import getpass
+
+        from southview.auth import hash_password
+
+        password = getpass.getpass("Password: ")
+        confirm = getpass.getpass("Confirm password: ")
+        if password != confirm:
+            print("Passwords did not match.")
+            sys.exit(1)
+        print(hash_password(password))
 
     else:
         print(f"Unknown command: {command}")
