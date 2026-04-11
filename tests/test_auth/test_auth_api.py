@@ -41,6 +41,8 @@ def test_login_sets_session_and_unlocks_api(tmp_config):
         )
         assert login_response.status_code == 200
         assert login_response.json()["authenticated"] is True
+        assert "SameSite=strict" in login_response.headers["set-cookie"]
+        assert "HttpOnly" in login_response.headers["set-cookie"]
 
         session_response = client.get("/api/auth/session")
         assert session_response.status_code == 200

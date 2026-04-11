@@ -92,6 +92,7 @@ Origins are hardcoded to `localhost:5173`. Production deployment will require co
 ### 1.8 P1 — No CSRF protection on state-mutating endpoints
 
 **Files:** All POST/PUT/DELETE routes; `frontend/src/app/data/api.ts:28-48`
+**Status:** Closed on 2026-04-11 with no additional code changes. For this internal single-admin deployment, the combination of `SameSite=strict` session cookies and the now-explicit CORS allowlist materially reduces browser-driven CSRF exposure. I am not layering in a second CSRF mechanism yet; instead I added regression coverage to preserve the strict cookie behavior this assessment depends on.
 
 Cookie-based auth without CSRF tokens means any cross-origin page (if CORS is misconfigured or via subdomain takeover) can make authenticated requests.
 
