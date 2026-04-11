@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from southview.api.app import create_app
-from southview.auth import hash_password
+from southview.auth import hash_password, verify_login
 
 
 @contextmanager
@@ -58,3 +58,17 @@ def test_invalid_login_is_rejected(tmp_config):
         )
         assert response.status_code == 401
         assert "Invalid username or password" in response.json()["detail"]
+
+
+def test_verify_login_still_checks_password_for_wrong_username(tmp_config):
+    auth_env = {
+        "SOUTHVIEW_AUTH_USERNAME": "admin",
+        "SOUTHVIEW_AUTH_PASSWORD_HASH": hash_password("test-password"),
+        "SOUTHVIEW_AUTH_SESSION_SECRET": "test-session-secret",
+    }
+
+    with patch.dict(os.environ, auth_env, clear=False), \
+         patch("southview.auth.verify_password", return_value=True) as verify_password_mock:
+        assert verify_login("wrong-user", "test-password") is False
+
+    verify_password_mock.assert_called_once()

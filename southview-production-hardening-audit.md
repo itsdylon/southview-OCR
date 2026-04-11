@@ -56,6 +56,7 @@ if not str(resolved).startswith(str(_FRONTEND_DIR.resolve())):
 ### 1.4 P0 — Timing attack on username comparison
 
 **File:** `src/southview/auth.py:56`
+**Status:** Closed on 2026-04-11. Real but lower practical impact for this internal deployment: login is still internet-reachable on the VPS, and the fixed admin username made enumeration especially cheap. `verify_login()` now uses a constant-time username comparison and always performs a password verification pass before returning.
 
 `username != settings.username` is a standard string comparison that leaks timing information about the valid username. Combined with the hardcoded default `"admin"`, this makes enumeration trivial.
 

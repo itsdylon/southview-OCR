@@ -15,6 +15,10 @@ from fastapi import HTTPException, Request, status
 
 PBKDF2_PREFIX: Final[str] = "pbkdf2_sha256"
 SESSION_COOKIE_NAME: Final[str] = "southview_session"
+_DUMMY_PASSWORD_HASH: Final[str] = (
+    "pbkdf2_sha256$310000$southview-dummy-salt$"
+    "Zy6k2AoYPwzlGjCpdfs+ZgLxmGpnW6iopukYY0J5ikI="
+)
 _ENV_LOADED = False
 _ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 
@@ -53,9 +57,10 @@ def validate_auth_configuration() -> None:
 
 def verify_login(username: str, password: str) -> bool:
     settings = get_auth_settings()
-    if username != settings.username or not settings.password_hash:
-        return False
-    return verify_password(password, settings.password_hash)
+    username_matches = hmac.compare_digest(username, settings.username)
+    password_hash = settings.password_hash or _DUMMY_PASSWORD_HASH
+    password_matches = verify_password(password, password_hash)
+    return bool(settings.password_hash) and username_matches and password_matches
 
 
 def issue_session_token(username: str) -> str:
