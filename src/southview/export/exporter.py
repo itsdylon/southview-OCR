@@ -8,7 +8,14 @@ from pathlib import Path
 from sqlalchemy.orm import joinedload
 
 from southview.db.engine import get_session
-from southview.db.models import Card, OCRResult, STRUCTURED_OCR_FIELDS, Video
+from southview.db.models import Card, OCRResult, STRUCTURED_OCR_FIELDS
+
+
+def _parse_status_filter(status: str | None) -> list[str] | None:
+    if not status:
+        return None
+    items = [s.strip().lower() for s in status.split(",") if s.strip()]
+    return items or None
 
 
 def _query_cards(video_id: str | None = None, status: str | None = None) -> list[dict]:
@@ -18,12 +25,14 @@ def _query_cards(video_id: str | None = None, status: str | None = None) -> list
         query = (
             session.query(Card)
             .options(joinedload(Card.ocr_result), joinedload(Card.video))
+            .join(OCRResult, OCRResult.card_id == Card.id)
         )
 
         if video_id:
             query = query.filter(Card.video_id == video_id)
-        if status:
-            query = query.join(OCRResult).filter(OCRResult.review_status == status)
+        statuses = _parse_status_filter(status)
+        if statuses:
+            query = query.filter(OCRResult.review_status.in_(statuses))
 
         query = query.order_by(Card.video_id, Card.sequence_index)
         cards = query.all()

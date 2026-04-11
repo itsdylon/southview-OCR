@@ -105,18 +105,27 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
             ocr_result["failed"],
             ocr_elapsed,
         )
-        if cards_inserted > 0 and int(ocr_result.get("processed", 0)) == 0:
+        ocr_processed = int(ocr_result.get("processed", 0) or 0)
+        ocr_failed = int(ocr_result.get("failed", 0) or 0)
+        ocr_total = ocr_processed + ocr_failed
+        if cards_inserted > 0 and ocr_processed == 0:
             first_error = str(ocr_result.get("first_error") or "unknown OCR error")
             raise RuntimeError(
                 f"OCR failed for all {cards_inserted} cards. Example error: {first_error}"
+            )
+        if ocr_failed > 0:
+            raise RuntimeError(
+                f"OCR failed for {ocr_failed} card(s) out of {ocr_total}; marking pipeline as failed."
             )
         update_progress(job_id, 100)
 
         mark_completed(job_id)
         video.status = "completed"
 
-        # Delete source video file — only extracted frames are kept
-        if video.filepath:
+        delete_source = bool(
+            get_config().get("storage", {}).get("delete_source_video_after_processing", False)
+        )
+        if delete_source and video.filepath:
             video_file = Path(video.filepath)
             if video_file.exists():
                 video_file.unlink()

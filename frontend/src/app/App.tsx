@@ -1,6 +1,7 @@
 import { RouterProvider } from 'react-router';
 import { Toaster } from 'sonner';
 import { router } from './routes';
+import { AuthProvider, useAuth } from './auth/auth-provider';
 import { MockDbProvider, useApiState } from './data/mock-db';
 
 function AppContent() {
@@ -48,10 +49,29 @@ function AppContent() {
   );
 }
 
-export default function App() {
+function RoutedApp() {
+  const { authenticated } = useAuth();
+
+  if (!authenticated) {
+    return (
+      <>
+        <RouterProvider router={router} />
+        <Toaster position="top-right" richColors closeButton />
+      </>
+    );
+  }
+
   return (
     <MockDbProvider>
       <AppContent />
     </MockDbProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <RoutedApp />
+    </AuthProvider>
   );
 }

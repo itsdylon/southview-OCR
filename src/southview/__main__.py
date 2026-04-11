@@ -7,6 +7,7 @@ Usage:
     python -m southview bakeoff ...    — Run/summarize model bake-off
     python -m southview export [opts]  — Export data
     python -m southview backup         — Create a backup
+    python -m southview hash-password  — Generate a password hash
 """
 
 import argparse
@@ -137,6 +138,18 @@ def main():
         init_db()
         path = create_backup()
         print(f"Backup created: {path}")
+
+    elif command == "hash-password":
+        import getpass
+
+        from southview.auth import hash_password
+
+        password = getpass.getpass("Password: ")
+        confirm = getpass.getpass("Confirm password: ")
+        if password != confirm:
+            print("Passwords did not match.")
+            sys.exit(1)
+        print(hash_password(password))
 
     else:
         print(f"Unknown command: {command}")

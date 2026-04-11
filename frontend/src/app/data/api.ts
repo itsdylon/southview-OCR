@@ -5,6 +5,8 @@
 
 import type { Video, Job, CardWithOCR, OCRResult, ReviewStatus } from '../types/ocr';
 
+const UNAUTHORIZED_EVENT = 'southview:unauthorized';
+
 // ---------------------------------------------------------------------------
 // Error class
 // ---------------------------------------------------------------------------
@@ -24,16 +26,30 @@ export class ApiError extends Error {
 // ---------------------------------------------------------------------------
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetch(url, {
+    credentials: 'include',
+    ...init,
+  });
   if (!res.ok) {
     let detail = res.statusText;
     try {
       const body = await res.json();
       detail = body.detail ?? JSON.stringify(body);
     } catch { /* ignore */ }
+    if (res.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    }
     throw new ApiError(res.status, detail);
   }
+  if (res.status === 204) {
+    return undefined as T;
+  }
   return res.json() as Promise<T>;
+}
+
+interface SessionResponse {
+  authenticated: boolean;
+  username: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,8 +109,10 @@ interface RawCard {
   frame_number: number;
   image_path: string;
   raw_text: string;
+  raw_fields_json?: string | null;
   corrected_text: string | null;
   confidence_score: number;
+  rotation_degrees?: number | null;
   review_status: string;
   // structured fields (snake_case — matches frontend type)
   deceased_name: string | null;
@@ -131,6 +149,7 @@ interface RawCardDetail {
     reviewed_at: string | null;
     raw_fields_json: string | null;
     processed_at: string | null;
+    rotation_degrees: number | null;
     deceased_name: string | null;
     address: string | null;
     owner: string | null;
@@ -201,7 +220,8 @@ function mapCardFromList(c: RawCard): CardWithOCR {
       reviewStatus: (c.review_status || 'pending') as ReviewStatus,
       confidenceScore: c.confidence_score,
       rawText: c.raw_text,
-      rawFieldsJson: '',
+      rawFieldsJson: c.raw_fields_json ?? '',
+      rotationDegrees: c.rotation_degrees ?? 0,
       deceased_name: c.deceased_name,
       address: c.address,
       owner: c.owner,
@@ -238,6 +258,7 @@ function mapCardFromDetail(d: RawCardDetail): CardWithOCR {
       confidenceScore: ocr?.confidence_score ?? 0,
       rawText: ocr?.raw_text ?? '',
       rawFieldsJson: ocr?.raw_fields_json ?? '',
+      rotationDegrees: ocr?.rotation_degrees ?? 0,
       wordConfidences: ocr?.word_confidences ? JSON.parse(ocr.word_confidences) : undefined,
       deceased_name: ocr?.deceased_name ?? null,
       address: ocr?.address ?? null,
@@ -274,6 +295,10 @@ export async function fetchVideoDetail(id: string): Promise<Video> {
   return mapVideo(raw);
 }
 
+export async function deleteVideo(videoId: string): Promise<void> {
+  await apiFetch(`/api/videos/${videoId}`, { method: 'DELETE' });
+}
+
 export async function uploadVideo(file: File): Promise<{ video: Video; xhr: XMLHttpRequest }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -281,6 +306,7 @@ export async function uploadVideo(file: File): Promise<{ video: Video; xhr: XMLH
     formData.append('file', file);
 
     xhr.open('POST', '/api/videos/upload');
+    xhr.withCredentials = true;
 
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
@@ -307,6 +333,9 @@ export async function uploadVideo(file: File): Promise<{ video: Video; xhr: XMLH
           const body = JSON.parse(xhr.responseText);
           detail = body.detail ?? detail;
         } catch { /* ignore */ }
+        if (xhr.status === 401 && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+        }
         reject(new ApiError(xhr.status, detail));
       }
     };
@@ -336,6 +365,7 @@ export function uploadVideoWithProgress(
     };
 
     xhr.open('POST', '/api/videos/upload');
+    xhr.withCredentials = true;
 
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
@@ -361,6 +391,9 @@ export function uploadVideoWithProgress(
           const body = JSON.parse(xhr.responseText);
           detail = body.detail ?? detail;
         } catch { /* ignore */ }
+        if (xhr.status === 401 && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+        }
         reject(new ApiError(xhr.status, detail));
       }
     };
@@ -419,6 +452,10 @@ export async function fetchCard(cardId: string): Promise<CardWithOCR> {
   return mapCardFromDetail(raw);
 }
 
+export async function deleteCard(cardId: string): Promise<void> {
+  await apiFetch(`/api/cards/${cardId}`, { method: 'DELETE' });
+}
+
 export async function submitReview(
   cardId: string,
   fields: Partial<OCRResult>,
@@ -429,9 +466,21 @@ export async function submitReview(
 
   // Map structured fields directly (they're already snake_case)
   const structuredFields = [
-    'deceased_name', 'address', 'owner', 'relation', 'phone',
-    'date_of_death', 'date_of_burial', 'description', 'sex', 'age',
-    'grave_type', 'grave_fee', 'undertaker', 'board_of_health_no', 'svc_no',
+    'deceased_name',
+    'address',
+    'owner',
+    'relation',
+    'phone',
+    'date_of_death',
+    'date_of_burial',
+    'description',
+    'sex',
+    'age',
+    'grave_type',
+    'grave_fee',
+    'undertaker',
+    'board_of_health_no',
+    'svc_no',
   ] as const;
 
   for (const f of structuredFields) {
@@ -472,9 +521,21 @@ export async function downloadExport(
   if (videoId) params.set('video_id', videoId);
   if (status) params.set('status', status);
 
-  const res = await fetch(`/api/export?${params.toString()}`);
+  const res = await fetch(`/api/export?${params.toString()}`, { credentials: 'include' });
   if (!res.ok) {
-    throw new ApiError(res.status, res.statusText);
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail ?? JSON.stringify(body);
+    } catch {
+      try {
+        detail = await res.text();
+      } catch { /* ignore */ }
+    }
+    if (res.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    }
+    throw new ApiError(res.status, detail);
   }
   return res.blob();
 }
@@ -499,4 +560,28 @@ export async function fetchBackups(): Promise<
   Array<{ filename: string; created_at: string; size_bytes: number }>
 > {
   return apiFetch('/api/backups');
+}
+
+export async function fetchSession(): Promise<SessionResponse> {
+  return apiFetch<SessionResponse>('/api/auth/session');
+}
+
+export async function login(username: string, password: string): Promise<SessionResponse> {
+  return apiFetch<SessionResponse>('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function logout(): Promise<void> {
+  await apiFetch('/api/auth/logout', { method: 'POST' });
+}
+
+export function subscribeToUnauthorized(handler: () => void): () => void {
+  if (typeof window === 'undefined') {
+    return () => {};
+  }
+  window.addEventListener(UNAUTHORIZED_EVENT, handler);
+  return () => window.removeEventListener(UNAUTHORIZED_EVENT, handler);
 }

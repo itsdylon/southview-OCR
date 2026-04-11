@@ -1,9 +1,9 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import joinedload
 
 from southview.config import get_config
@@ -106,6 +106,9 @@ def list_cards(
                 "image_path": c.image_path,
                 "review_status": r.review_status if r else None,
                 "confidence_score": float(r.confidence_score) if r else None,
+                "raw_text": r.raw_text if r else "",
+                "raw_fields_json": getattr(r, "raw_fields_json", None) if r else None,
+                "rotation_degrees": getattr(r, "rotation_degrees", 0) if r else 0,
                 "error_message": getattr(r, "error_message", None) if r else None,
             }
             for field in STRUCTURED_OCR_FIELDS:
@@ -144,6 +147,7 @@ def get_card_detail(card_id: str) -> dict[str, Any]:
             "raw_text": r.raw_text,
             "raw_fields_json": getattr(r, "raw_fields_json", None),
             "confidence_score": float(r.confidence_score),
+            "rotation_degrees": getattr(r, "rotation_degrees", 0),
             "review_status": r.review_status,
             "reviewed_by": r.reviewed_by,
             "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,

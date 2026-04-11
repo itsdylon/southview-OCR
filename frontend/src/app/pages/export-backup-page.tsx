@@ -12,7 +12,12 @@ export default function ExportBackupPage() {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const mappedStatus = statusFilter === 'approved-corrected' ? undefined : statusFilter === 'all' ? undefined : statusFilter;
+      const mappedStatus =
+        statusFilter === 'approved-corrected'
+          ? 'approved,corrected'
+          : statusFilter === 'all'
+            ? undefined
+            : statusFilter;
       const blob = await api.downloadExport(exportFormat, undefined, mappedStatus);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -34,7 +39,7 @@ export default function ExportBackupPage() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Export</h1>
           <p className="text-gray-600">
-            Export approved records
+            Export reviewed burial card records
           </p>
         </div>
 
@@ -51,7 +56,7 @@ export default function ExportBackupPage() {
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-1">Export Database</h3>
                   <p className="text-sm text-gray-600">
-                    Download processed and approved records for external use
+                    Download processed records with the current slim field set and full OCR text
                   </p>
                 </div>
 
@@ -64,10 +69,12 @@ export default function ExportBackupPage() {
                     onChange={(e) => setStatusFilter(e.target.value)}
                     className="w-full max-w-xs px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   >
-                    <option value="all">All Statuses</option>
+                    <option value="approved-corrected">Approved and Corrected</option>
                     <option value="approved">Approved Only</option>
-                    <option value="approved-flagged">Approved and Flagged</option>
+                    <option value="corrected">Corrected Only</option>
                     <option value="flagged">Flagged Only</option>
+                    <option value="pending">Pending Only</option>
+                    <option value="all">All Statuses</option>
                   </select>
                 </div>
 
