@@ -1,12 +1,13 @@
 """FastAPI application factory."""
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 
 from southview.auth import get_authenticated_user
 from southview.config import get_config
@@ -14,6 +15,17 @@ from southview.db.engine import init_db
 
 # Resolve frontend dist directory (relative to project root)
 _FRONTEND_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+
+
+def _resolve_frontend_file(path: str) -> Path | None:
+    """Return a safe frontend file path, or None if it escapes the dist dir."""
+    frontend_root = _FRONTEND_DIR.resolve()
+    candidate = (frontend_root / path).resolve(strict=False)
+    try:
+        candidate.relative_to(frontend_root)
+    except ValueError:
+        return None
+    return candidate
 
 
 def create_app() -> FastAPI:
@@ -73,8 +85,8 @@ def create_app() -> FastAPI:
         @app.get("/{path:path}")
         async def spa_fallback(path: str):
             """Serve frontend files, fall back to index.html for SPA routing."""
-            file = _FRONTEND_DIR / path
-            if file.is_file():
+            file = _resolve_frontend_file(path)
+            if file and file.is_file():
                 return FileResponse(file)
             return FileResponse(_FRONTEND_DIR / "index.html")
 

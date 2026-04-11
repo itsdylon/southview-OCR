@@ -41,6 +41,7 @@ safe_name = re.sub(r'[^\w.\-]', '_', Path(file.filename or "upload.mp4").name)
 ### 1.3 P0 — Path traversal in SPA fallback catch-all
 
 **File:** `src/southview/api/app.py:73-79`
+**Status:** Closed on 2026-04-11. Confirmed as a real concern because the catch-all route accepts multi-segment paths and previously trusted them as relative filesystem paths. The fallback now resolves requested files against `frontend/dist` and serves `index.html` whenever the resolved path escapes that directory; regression coverage was added.
 
 The `spa_fallback` route serves any file under `_FRONTEND_DIR / path` where `path` comes from the URL. A request to `/%2e%2e/%2e%2e/etc/passwd` (URL-encoded `../../etc/passwd`) could serve arbitrary files.
 
