@@ -17,6 +17,7 @@ def client(tmp_path, tmp_db, tmp_config):
     """TestClient wired to a temp database and storage directories."""
     config = tmp_config
     auth_env = {
+        "SOUTHVIEW_ENV": "development",
         "SOUTHVIEW_AUTH_USERNAME": "admin",
         "SOUTHVIEW_AUTH_PASSWORD_HASH": hash_password("test-password"),
         "SOUTHVIEW_AUTH_SESSION_SECRET": "test-session-secret",

@@ -54,12 +54,14 @@ Required variables:
 
 Recommended local variables:
 
+- `SOUTHVIEW_ENV=development`
 - `SOUTHVIEW_AUTH_SECURE_COOKIES=false`
 - `SOUTHVIEW_AUTH_SESSION_TTL_SECONDS=43200`
 
 Example template:
 
 ```env
+SOUTHVIEW_ENV=development
 SOUTHVIEW_AUTH_USERNAME=admin
 SOUTHVIEW_AUTH_PASSWORD_HASH=<team-shared-password-hash>
 SOUTHVIEW_AUTH_SESSION_SECRET=<team-shared-session-secret>
@@ -107,6 +109,7 @@ Required variables:
 
 Optional variables:
 
+- `SOUTHVIEW_ENV`
 - `SOUTHVIEW_AUTH_SECURE_COOKIES`
 - `SOUTHVIEW_AUTH_SESSION_TTL_SECONDS`
 
@@ -125,6 +128,7 @@ For production, the deployed app must have the same auth variables configured in
 ### Required production env vars
 
 ```env
+SOUTHVIEW_ENV=production
 SOUTHVIEW_AUTH_USERNAME=admin
 SOUTHVIEW_AUTH_PASSWORD_HASH=<generated password hash>
 SOUTHVIEW_AUTH_SESSION_SECRET=<long random secret>
@@ -144,9 +148,10 @@ GEMINI_API_KEY=<production-key>
 2. Run `python -m southview hash-password` locally to generate the hash.
 3. Generate a long random value for `SOUTHVIEW_AUTH_SESSION_SECRET`.
 4. Add those values to your hosting provider's environment variables.
-5. Set `SOUTHVIEW_AUTH_SECURE_COOKIES=true` for HTTPS deployments.
-6. Deploy the app.
-7. Test login in the deployed environment with the shared admin username and password.
+5. Leave `SOUTHVIEW_ENV` unset or set it to `production` for deployed environments.
+6. Leave `SOUTHVIEW_AUTH_SECURE_COOKIES` unset or set it to `true` for HTTPS deployments.
+7. Deploy the app.
+8. Test login in the deployed environment with the shared admin username and password.
 
 ### Important security notes
 

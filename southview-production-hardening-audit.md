@@ -65,6 +65,7 @@ if not str(resolved).startswith(str(_FRONTEND_DIR.resolve())):
 ### 1.5 P1 — Insecure cookie defaults (`secure=False`)
 
 **File:** `src/southview/auth.py:37`
+**Status:** Closed on 2026-04-11. Real concern for the Hetzner VPS deployment because the app is intended to sit behind HTTPS and cookie transport security should be the safe default. Secure cookies now default to `True` outside `SOUTHVIEW_ENV=development`, and the local setup docs/tests were updated to opt out explicitly during HTTP development.
 
 `secure_cookies` defaults to `False`. In production over HTTPS, session cookies are still sent over HTTP redirects or mixed content, enabling MITM session hijacking.
 

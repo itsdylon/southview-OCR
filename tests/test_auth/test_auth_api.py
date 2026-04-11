@@ -7,12 +7,13 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from southview.api.app import create_app
-from southview.auth import hash_password, verify_login
+from southview.auth import get_auth_settings, hash_password, verify_login
 
 
 @contextmanager
 def make_client(tmp_config):
     auth_env = {
+        "SOUTHVIEW_ENV": "development",
         "SOUTHVIEW_AUTH_USERNAME": "admin",
         "SOUTHVIEW_AUTH_PASSWORD_HASH": hash_password("test-password"),
         "SOUTHVIEW_AUTH_SESSION_SECRET": "test-session-secret",
@@ -62,6 +63,7 @@ def test_invalid_login_is_rejected(tmp_config):
 
 def test_verify_login_still_checks_password_for_wrong_username(tmp_config):
     auth_env = {
+        "SOUTHVIEW_ENV": "development",
         "SOUTHVIEW_AUTH_USERNAME": "admin",
         "SOUTHVIEW_AUTH_PASSWORD_HASH": hash_password("test-password"),
         "SOUTHVIEW_AUTH_SESSION_SECRET": "test-session-secret",
@@ -72,3 +74,27 @@ def test_verify_login_still_checks_password_for_wrong_username(tmp_config):
         assert verify_login("wrong-user", "test-password") is False
 
     verify_password_mock.assert_called_once()
+
+
+def test_secure_cookies_default_to_true_outside_development():
+    with patch("southview.auth._load_env_file"), patch.dict(
+        os.environ,
+        {
+            "SOUTHVIEW_ENV": "production",
+            "SOUTHVIEW_AUTH_SECURE_COOKIES": "false",
+        },
+        clear=True,
+    ):
+        assert get_auth_settings().secure_cookies is True
+
+
+def test_secure_cookies_can_be_disabled_in_development():
+    with patch("southview.auth._load_env_file"), patch.dict(
+        os.environ,
+        {
+            "SOUTHVIEW_ENV": "development",
+            "SOUTHVIEW_AUTH_SECURE_COOKIES": "false",
+        },
+        clear=True,
+    ):
+        assert get_auth_settings().secure_cookies is False

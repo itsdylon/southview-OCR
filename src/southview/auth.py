@@ -34,11 +34,12 @@ class AuthSettings:
 
 def get_auth_settings() -> AuthSettings:
     _load_env_file()
+    app_env = _normalized_env(os.getenv("SOUTHVIEW_ENV"))
     return AuthSettings(
         username=os.getenv("SOUTHVIEW_AUTH_USERNAME", "admin"),
         password_hash=os.getenv("SOUTHVIEW_AUTH_PASSWORD_HASH"),
         session_secret=os.getenv("SOUTHVIEW_AUTH_SESSION_SECRET"),
-        secure_cookies=_parse_bool(os.getenv("SOUTHVIEW_AUTH_SECURE_COOKIES"), default=False),
+        secure_cookies=_secure_cookies_enabled(app_env, os.getenv("SOUTHVIEW_AUTH_SECURE_COOKIES")),
         session_ttl_seconds=int(os.getenv("SOUTHVIEW_AUTH_SESSION_TTL_SECONDS", "43200")),
     )
 
@@ -168,6 +169,17 @@ def _parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalized_env(value: str | None) -> str:
+    return (value or "production").strip().lower()
+
+
+def _secure_cookies_enabled(app_env: str, configured_value: str | None) -> bool:
+    """Keep secure cookies on by default outside explicit local development."""
+    if app_env == "development":
+        return _parse_bool(configured_value, default=False)
+    return True
 
 
 def _load_env_file() -> None:
