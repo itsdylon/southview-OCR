@@ -71,6 +71,15 @@ def _resolution_str(w: int | None, h: int | None) -> str | None:
     return None
 
 
+def _safe_upload_name(filename: str | None, fallback_suffix: str) -> str:
+    """Return a basename-only filename safe to use under a temp directory."""
+    raw_name = (filename or "").replace("\\", "/")
+    safe_name = Path(raw_name).name
+    if safe_name in {"", ".", ".."}:
+        return f"upload{fallback_suffix}"
+    return safe_name
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -87,7 +96,7 @@ async def upload_video_endpoint(file: UploadFile = File(...)):
         )
 
     tmp_dir = tempfile.mkdtemp()
-    original_name = file.filename or f"upload{suffix}"
+    original_name = _safe_upload_name(file.filename, suffix)
     tmp_path = Path(tmp_dir) / original_name
     try:
         # Stream the upload in chunks instead of reading entirely into memory

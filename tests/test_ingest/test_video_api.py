@@ -79,6 +79,24 @@ class TestUploadEndpoint:
         assert resp.status_code == 400
         assert "Unsupported file extension" in resp.json()["detail"]
 
+    def test_upload_strips_path_components_from_filename(self, client, tiny_mp4, monkeypatch, tmp_path):
+        """Upload temp writes stay inside the temp directory even with traversal names."""
+        upload_tmp = tmp_path / "upload-tmp"
+        upload_tmp.mkdir()
+        leaked_path = tmp_path / "escape.mp4"
+
+        monkeypatch.setattr("southview.api.routes.videos.tempfile.mkdtemp", lambda: str(upload_tmp))
+
+        with open(tiny_mp4, "rb") as f:
+            resp = client.post(
+                "/api/videos/upload",
+                files={"file": ("../escape.mp4", f, "video/mp4")},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["filename"] == "escape.mp4"
+        assert not leaked_path.exists()
+
 
 class TestListEndpoint:
     def test_list_empty(self, client):
