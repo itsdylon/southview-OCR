@@ -1,5 +1,6 @@
 """FastAPI application factory."""
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -15,6 +16,7 @@ from southview.db.engine import init_db
 
 # Resolve frontend dist directory (relative to project root)
 _FRONTEND_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+_DEFAULT_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 
 def _resolve_frontend_file(path: str) -> Path | None:
@@ -26,6 +28,14 @@ def _resolve_frontend_file(path: str) -> Path | None:
     except ValueError:
         return None
     return candidate
+
+
+def _cors_origins() -> list[str]:
+    configured = os.getenv("SOUTHVIEW_CORS_ORIGINS")
+    if not configured:
+        return list(_DEFAULT_CORS_ORIGINS)
+    origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
+    return origins or list(_DEFAULT_CORS_ORIGINS)
 
 
 def create_app() -> FastAPI:
@@ -40,15 +50,17 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=_cors_origins(),
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_headers=["Content-Type"],
     )
 
     @app.middleware("http")
     async def require_auth(request: Request, call_next):
         path = request.url.path
+        if request.method == "OPTIONS":
+            return await call_next(request)
         if path.startswith("/api") and not path.startswith("/api/auth"):
             try:
                 get_authenticated_user(request)

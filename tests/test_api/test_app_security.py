@@ -1,5 +1,6 @@
 """Security-focused tests for the FastAPI app shell."""
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,3 +42,31 @@ def test_spa_fallback_serves_frontend_files_only(tmp_path):
             traversal_response = client.get("/%2e%2e/secret.txt")
             assert traversal_response.status_code == 200
             assert traversal_response.text == "INDEX"
+
+
+def test_cors_uses_configured_origins_and_explicit_methods(tmp_path):
+    frontend_dir = tmp_path / "frontend-dist"
+    assets_dir = frontend_dir / "assets"
+    frontend_dir.mkdir()
+    assets_dir.mkdir()
+    (frontend_dir / "index.html").write_text("INDEX", encoding="utf-8")
+
+    with patch("southview.api.app.init_db"), \
+         patch("southview.api.app.get_config", return_value=_test_config(tmp_path)), \
+         patch("southview.api.app._FRONTEND_DIR", frontend_dir), \
+         patch.dict(os.environ, {"SOUTHVIEW_CORS_ORIGINS": "https://southview.example"}, clear=False):
+        app = create_app()
+        with TestClient(app) as client:
+            response = client.options(
+                "/api/videos",
+                headers={
+                    "Origin": "https://southview.example",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "Content-Type",
+                },
+            )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://southview.example"
+    assert response.headers["access-control-allow-methods"] == "GET, POST, PUT, DELETE"
+    assert response.headers["access-control-allow-headers"] == "Accept, Accept-Language, Content-Language, Content-Type"

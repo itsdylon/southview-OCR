@@ -110,6 +110,7 @@ Required variables:
 Optional variables:
 
 - `SOUTHVIEW_ENV`
+- `SOUTHVIEW_CORS_ORIGINS`
 - `SOUTHVIEW_AUTH_SECURE_COOKIES`
 - `SOUTHVIEW_AUTH_SESSION_TTL_SECONDS`
 
@@ -140,6 +141,12 @@ If Gemini OCR is used in production, also set:
 
 ```env
 GEMINI_API_KEY=<production-key>
+```
+
+If the frontend is served from a different origin than the API, also set:
+
+```env
+SOUTHVIEW_CORS_ORIGINS=https://southview.example
 ```
 
 ### Production checklist

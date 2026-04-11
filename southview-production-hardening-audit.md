@@ -74,6 +74,7 @@ if not str(resolved).startswith(str(_FRONTEND_DIR.resolve())):
 ### 1.6 P1 — CORS allows all methods and headers with credentials
 
 **File:** `src/southview/api/app.py:29-35`
+**Status:** Closed on 2026-04-11. Low immediate risk in the current repo state because CORS was still limited to localhost origins, but it would have become unsafe the moment a production origin was added. The CORS policy now allows only explicit methods and the `Content-Type` header.
 
 `allow_methods=["*"]` and `allow_headers=["*"]` combined with `allow_credentials=True` is overly permissive. While origins are currently locked to localhost, any future origin addition inherits this broad access.
 
@@ -82,6 +83,7 @@ if not str(resolved).startswith(str(_FRONTEND_DIR.resolve())):
 ### 1.7 P1 — Hardcoded CORS origins (localhost only)
 
 **File:** `src/southview/api/app.py:31`
+**Status:** Closed on 2026-04-11. Real deployment concern: a production frontend would have required a code change or a same-origin reverse-proxy setup. Allowed origins are now configurable through `SOUTHVIEW_CORS_ORIGINS`, while localhost remains the development default.
 
 Origins are hardcoded to `localhost:5173`. Production deployment will require code changes.
 
