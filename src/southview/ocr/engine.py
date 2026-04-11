@@ -10,7 +10,7 @@ from southview.ocr.tesseract_wrapper import run_tesseract
 
 
 def get_ocr_engine_name() -> str:
-    return str(get_config().get("ocr", {}).get("engine", "tesseract")).strip().lower()
+    return str(get_config().get("ocr", {}).get("engine", "gemini")).strip().lower()
 
 
 def uses_rotation_sweep() -> bool:

@@ -10,6 +10,24 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+STRUCTURED_OCR_FIELDS = [
+    "deceased_name",
+    "address",
+    "owner",
+    "relation",
+    "phone",
+    "date_of_death",
+    "date_of_burial",
+    "description",
+    "sex",
+    "age",
+    "grave_type",
+    "grave_fee",
+    "undertaker",
+    "board_of_health_no",
+    "svc_no",
+]
+
 
 class Base(DeclarativeBase):
     pass
@@ -105,7 +123,6 @@ class OCRResult(Base):
     word_confidences: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON if you want
 
     ocr_engine_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    rotation_degrees: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     processed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
@@ -114,7 +131,7 @@ class OCRResult(Base):
 
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # structured fields
+    # Structured card fields (OCR-extracted, then corrected during review)
     deceased_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     address: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     owner: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -122,7 +139,7 @@ class OCRResult(Base):
     phone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     date_of_death: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     date_of_burial: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     sex: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     age: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     grave_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)

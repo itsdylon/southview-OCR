@@ -467,12 +467,19 @@ export async function submitReview(
   // Map structured fields directly (they're already snake_case)
   const structuredFields = [
     'deceased_name',
+    'address',
+    'owner',
+    'relation',
+    'phone',
     'date_of_death',
     'date_of_burial',
     'description',
     'sex',
     'age',
+    'grave_type',
+    'grave_fee',
     'undertaker',
+    'board_of_health_no',
     'svc_no',
   ] as const;
 

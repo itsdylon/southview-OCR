@@ -1,3 +1,4 @@
+# src/southview/ocr/processor_min.py
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,8 @@ _SIDEWAYS_ORIENTATIONS: List[Tuple[int, Any]] = [
 ]
 
 _CORE_CONFIDENCE_WEIGHTS: Dict[str, float] = {
-    "owner_name": 1.25,
+    "deceased_name": 1.25,
+    "owner_name": 1.25,  # legacy alias
     "date_of_death": 1.1,
     "date_of_burial": 1.0,
     "description": 1.0,
@@ -113,7 +115,7 @@ def _card_confidence(fields: Dict[str, Any], field_conf: Dict[str, float]) -> fl
 
     score = weighted_total / weight_sum
 
-    if not _has_meaningful_value(fields.get("owner_name")):
+    if not _has_meaningful_value(fields.get("deceased_name")) and not _has_meaningful_value(fields.get("owner_name")):
         score -= 0.12
     if not _has_meaningful_value(fields.get("date_of_death")) and not _has_meaningful_value(fields.get("date_of_burial")):
         score -= 0.10
@@ -275,23 +277,22 @@ def _is_reasonable_fallback_value(key: str, value: Any, raw_text: str) -> bool:
         return False
 
     if key in {"date_of_death", "date_of_burial"}:
-        # Let the local parser own date extraction; it's more conservative and
-        # label-aware than the structured fallback.
+        # Local parser owns date extraction and is more conservative.
         return False
 
     date_like = bool(re.fullmatch(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", text)) or bool(
         re.fullmatch(r"[A-Za-z]+\s+\d{1,2},\s*\d{2,4}", text)
     )
 
-    if key in {"owner_address", "care_of", "relation"} and (date_like or _looks_like_labelish_value(text)):
+    if key in {"owner_address", "address", "care_of", "relation"} and (date_like or _looks_like_labelish_value(text)):
         return False
-    if key == "type_of_grave" and text.lower().startswith("description"):
+    if key in {"type_of_grave", "grave_type"} and text.lower().startswith("description"):
         return False
     if key == "undertaker" and _looks_like_labelish_value(text):
         return False
     if key == "board_of_health_no" and not re.search(r"[0-9A-Za-z]", text):
         return False
-    if key == "owner_address" and len(text) < 8:
+    if key in {"owner_address", "address"} and len(text) < 8:
         return False
     return True
 
@@ -318,11 +319,11 @@ def _heuristic_field_confidence(key: str, value: Any, base_confidence: float) ->
         return 0.0
 
     capped = min(float(base_confidence), 0.72)
-    if key in {"owner_name", "date_of_death", "date_of_burial"}:
+    if key in {"owner_name", "deceased_name", "date_of_death", "date_of_burial"}:
         capped = min(float(base_confidence), 0.82)
-    elif key in {"undertaker", "grave_type", "board_of_health_no", "svc_no"}:
+    elif key in {"undertaker", "grave_type", "type_of_grave", "board_of_health_no", "svc_no"}:
         capped = min(float(base_confidence), 0.68)
-    elif key in {"owner_address", "care_of", "relation", "phone"}:
+    elif key in {"owner_address", "address", "care_of", "relation", "phone"}:
         capped = min(float(base_confidence), 0.60)
 
     if _looks_like_labelish_value(text):
@@ -335,7 +336,7 @@ def _rotation_candidates() -> List[Tuple[int, Any]]:
         return _ORIENTATIONS
 
     rotation_mode = (
-        str(get_config().get("ocr", {}).get("gemini", {}).get("rotation_mode", "sideways")).strip().lower()
+        str(get_config().get("ocr", {}).get("gemini", {}).get("rotation_mode", "all")).strip().lower()
     )
     if rotation_mode == "all":
         return _ORIENTATIONS
@@ -356,7 +357,9 @@ def _ocr_pipeline(
     parsed = ocr.get("fields") or parse_fields_min(words, raw_text=raw_text)
     parsed = _normalize_parsed_fields(parsed)
 
-    if use_structured_fallback and get_ocr_engine_name() == "gemini" and raw_text:
+    has_embedded_fields = bool(ocr.get("fields"))
+
+    if use_structured_fallback and (not has_embedded_fields) and get_ocr_engine_name() == "gemini" and raw_text:
         try:
             fallback_fields = parse_structured_fields_with_gemini(raw_text)
         except Exception:
@@ -367,6 +370,7 @@ def _ocr_pipeline(
     meta = {
         "card_confidence": float(ocr.get("card_confidence", 0.0) or 0.0),
         "field_confidence": ocr.get("field_confidence") or {},
+        "has_embedded_fields": has_embedded_fields,
     }
     return parsed, words, raw_text, meta
 
@@ -403,10 +407,7 @@ def _build_result(
             except (TypeError, ValueError):
                 pass
 
-    if card_conf_override is None:
-        card_confidence = _card_confidence(fields, field_confidence)
-    else:
-        card_confidence = _card_confidence(fields, field_confidence)
+    card_confidence = _card_confidence(fields, field_confidence)
 
     return {
         "fields": fields,
@@ -451,7 +452,7 @@ def process_card_min(image_path: str) -> Dict[str, Any]:
 
     parsed, words, raw_text, degree, meta = best_result  # type: ignore[misc]
 
-    if get_ocr_engine_name() == "gemini" and raw_text:
+    if (not bool(meta.get("has_embedded_fields"))) and get_ocr_engine_name() == "gemini" and raw_text:
         try:
             fallback_fields = parse_structured_fields_with_gemini(raw_text)
         except Exception:

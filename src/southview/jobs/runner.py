@@ -1,7 +1,7 @@
-"""Job execution orchestrator - runs the full pipeline."""
+"""Job execution orchestrator — runs the full pipeline."""
 
 import logging
-import re
+import time
 from pathlib import Path
 
 from southview.config import get_config
@@ -15,43 +15,10 @@ from southview.ocr.batch import run_ocr_for_video
 logger = logging.getLogger(__name__)
 
 
-def _source_video_available(video: Video) -> bool:
-    return bool(video.filepath and Path(video.filepath).exists())
-
-
-def _load_existing_cards(session, video_id: str) -> list[Card]:
-    return (
-        session.query(Card)
-        .filter(Card.video_id == video_id)
-        .order_by(Card.sequence_index.asc())
-        .all()
-    )
-
-
-def _load_frame_results_from_disk(video_id: str) -> list[dict]:
-    frames_dir = Path(get_config()["storage"]["frames_dir"]) / video_id
-    if not frames_dir.exists():
-        return []
-
-    results = []
-    for image_path in sorted(frames_dir.glob("card_*.*")):
-        match = re.search(r"card_(\d+)", image_path.stem, re.IGNORECASE)
-        if not match:
-            continue
-        seq = int(match.group(1))
-        results.append(
-            {
-                "frame_number": seq,
-                "image_path": str(image_path),
-                "sequence_index": seq,
-            }
-        )
-    return results
-
-
 def run_full_pipeline(job_id: str, video_id: str) -> None:
-    """Execute the full processing pipeline: frame extraction -> OCR."""
+    """Execute the full processing pipeline: frame extraction → OCR."""
     session = get_session()
+    pipeline_started = time.perf_counter()
     try:
         video = session.query(Video).get(video_id)
         if video is None:
@@ -61,72 +28,96 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
         video.status = "processing"
         session.commit()
 
-        cards: list[Card] = []
-
-        if _source_video_available(video):
-            cleanup_previous_results(video_id)
-
-            logger.info("Extracting frames from video %s", video_id)
-            frame_results = extract_frames(video.filepath, video_id)
-            update_progress(job_id, 50)
-
-            for result in frame_results:
-                card = Card(
-                    video_id=video_id,
-                    job_id=job_id,
-                    frame_number=result["frame_number"],
-                    image_path=result["image_path"],
-                    sequence_index=result["sequence_index"],
-                )
-                session.add(card)
-                cards.append(card)
-            session.commit()
-        else:
-            cards = _load_existing_cards(session, video_id)
-            if not cards:
-                frame_results = _load_frame_results_from_disk(video_id)
-                for result in frame_results:
-                    card = Card(
-                        video_id=video_id,
-                        job_id=job_id,
-                        frame_number=result["frame_number"],
-                        image_path=result["image_path"],
-                        sequence_index=result["sequence_index"],
-                    )
-                    session.add(card)
-                    cards.append(card)
-                if cards:
-                    session.commit()
-
-            if not cards:
-                raise ValueError(
-                    "Original video file is no longer available for reprocessing and no extracted frames remain. "
-                    "Please re-upload the video."
-                )
-
-            logger.info(
-                "Source video missing for %s; reusing %d existing extracted card image(s)",
-                video_id,
-                len(cards),
+        source_video_path = (video.filepath or "").strip()
+        if not source_video_path:
+            raise ValueError(
+                "Video source file is unavailable. Re-upload the video before starting or retrying this job."
             )
-            update_progress(job_id, 50)
+        if not Path(source_video_path).exists():
+            raise FileNotFoundError(
+                f"Video source file not found on disk: {source_video_path}. "
+                "Re-upload the video before starting or retrying this job."
+            )
 
-        logger.info("Running OCR on %d cards", len(cards))
+        # Idempotency: clean up any previous results
+        cleanup_previous_results(video_id)
+
+        # Phase 1: Frame extraction (0–50%)
+        logger.info("Pipeline start: job_id=%s video_id=%s", job_id, video_id)
+        frame_started = time.perf_counter()
+        logger.info("Extracting frames: video_id=%s", video_id)
+        frame_results = extract_frames(source_video_path, video_id)
+        frame_elapsed = time.perf_counter() - frame_started
+        logger.info(
+            "Frame extraction complete: video_id=%s frames_selected=%d elapsed=%.1fs",
+            video_id,
+            len(frame_results),
+            frame_elapsed,
+        )
+        update_progress(job_id, 50)
+
+        # Create Card records in chunks for large runs.
+        cfg = get_config().get("frame_extraction", {})
+        db_insert_batch_size = int(cfg.get("db_insert_batch_size", 500))
+        if db_insert_batch_size < 1:
+            db_insert_batch_size = 500
+
+        card_insert_started = time.perf_counter()
+        cards_inserted = 0
+        pending_in_batch = 0
+        for result in frame_results:
+            card = Card(
+                video_id=video_id,
+                job_id=job_id,
+                frame_number=result["frame_number"],
+                image_path=result["image_path"],
+                sequence_index=result["sequence_index"],
+            )
+            session.add(card)
+            cards_inserted += 1
+            pending_in_batch += 1
+            if pending_in_batch >= db_insert_batch_size:
+                session.commit()
+                pending_in_batch = 0
+        if pending_in_batch:
+            session.commit()
+        card_insert_elapsed = time.perf_counter() - card_insert_started
+        logger.info(
+            "Card insert complete: video_id=%s cards=%d elapsed=%.1fs batch_size=%d",
+            video_id,
+            cards_inserted,
+            card_insert_elapsed,
+            db_insert_batch_size,
+        )
+
+        # Phase 2: OCR (50–100%)
+        ocr_started = time.perf_counter()
+        logger.info("Running OCR: video_id=%s cards=%d", video_id, cards_inserted)
         ocr_result = run_ocr_for_video(video_id, force=True)
+        ocr_elapsed = time.perf_counter() - ocr_started
+        logger.info(
+            (
+                "OCR stage complete: video_id=%s processed=%d failed=%d "
+                "elapsed=%.1fs"
+            ),
+            video_id,
+            ocr_result["processed"],
+            ocr_result["failed"],
+            ocr_elapsed,
+        )
         ocr_processed = int(ocr_result.get("processed", 0) or 0)
         ocr_failed = int(ocr_result.get("failed", 0) or 0)
         ocr_total = ocr_processed + ocr_failed
-        logger.info(
-            "OCR complete: %s processed, %s failed",
-            ocr_processed,
-            ocr_failed,
-        )
-
+        if cards_inserted > 0 and ocr_processed == 0:
+            first_error = str(ocr_result.get("first_error") or "unknown OCR error")
+            raise RuntimeError(
+                f"OCR failed for all {cards_inserted} cards. Example error: {first_error}"
+            )
         if ocr_failed > 0:
             raise RuntimeError(
-                f"OCR failed for {ocr_failed} card(s) out of {ocr_total}; "
-                "marking pipeline as failed."
+                f"OCR failed for {ocr_failed} card(s) out of {ocr_total}; marking pipeline as failed."
             )
+        update_progress(job_id, 100)
 
         mark_completed(job_id)
         video.status = "completed"
@@ -138,14 +129,30 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
             video_file = Path(video.filepath)
             if video_file.exists():
                 video_file.unlink()
-                logger.info("Deleted source video: %s", video.filepath)
+                logger.info(f"Deleted source video: {video.filepath}")
             video.filepath = None
 
         session.commit()
-        logger.info("Pipeline complete for video %s: %d cards processed", video_id, len(cards))
+        pipeline_elapsed = time.perf_counter() - pipeline_started
+        logger.info(
+            (
+                "Pipeline complete: job_id=%s video_id=%s cards=%d "
+                "elapsed=%.1fs"
+            ),
+            job_id,
+            video_id,
+            cards_inserted,
+            pipeline_elapsed,
+        )
 
     except Exception as e:
-        logger.exception("Pipeline failed for video %s", video_id)
+        pipeline_elapsed = time.perf_counter() - pipeline_started
+        logger.exception(
+            "Pipeline failed: job_id=%s video_id=%s elapsed=%.1fs",
+            job_id,
+            video_id,
+            pipeline_elapsed,
+        )
         mark_failed(job_id, str(e))
         try:
             video = session.query(Video).get(video_id)

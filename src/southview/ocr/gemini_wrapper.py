@@ -11,44 +11,56 @@ import cv2
 import numpy as np
 
 from southview.config import get_config
+from southview.ocr.errors import OCRProviderError
 
 _DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta"
 
 _SYSTEM_INSTRUCTION = (
-    "You extract text from historical cemetery burial cards. "
+    "You extract text and structured fields from historical cemetery burial cards. "
     "Return strict JSON only."
 )
 
+CANONICAL_FIELDS = [
+    "deceased_name",
+    "address",
+    "owner",
+    "relation",
+    "phone",
+    "date_of_death",
+    "date_of_burial",
+    "description",
+    "sex",
+    "age",
+    "grave_type",
+    "grave_fee",
+    "undertaker",
+    "board_of_health_no",
+    "svc_no",
+]
+
 _PROMPT = """
 Read this cemetery burial card image and return JSON with:
-- raw_text: a faithful transcription of the visible card text, preserving line breaks where practical.
-- card_confidence: a number from 0.0 to 1.0 representing your overall confidence in the extraction.
+- raw_text: a faithful transcription of visible card text, preserving line breaks where practical.
+- card_confidence: a number from 0.0 to 1.0 for overall extraction confidence.
+- fields: an object with these keys (all nullable strings):
+  deceased_name, address, owner, relation, phone,
+  date_of_death, date_of_burial, description,
+  sex, age, grave_type, grave_fee,
+  undertaker, board_of_health_no, svc_no.
+
+Field guidance:
+- deceased_name: top unlabeled deceased name text.
+- address: top unlabeled address text.
+- owner/relation/phone: values near those labels when present.
+- date_of_death/date_of_burial: preserve exact visible date text.
+- description: grave location/description text.
+- grave_type: value for type of grave.
 
 Rules:
 - Do not invent values.
-- Focus on transcription, not field interpretation.
-- Preserve field labels exactly when visible, including labels like Date of Death, Date of Burial, DOB, Undertaker, SVC No, Type of Grave, Grave Fee, and Board of Health No.
-- If two nearby dates appear on separate lines, transcribe both lines separately. Do not collapse two different dates into one repeated date.
-- Preserve numbers and punctuation as faithfully as possible, including commas inside numbers like 49,711 and separators in dates like 3-20-41.
+- Use only values explicitly visible on the card.
+- If a field is missing or illegible, return null for that field.
 - Output valid JSON only.
-""".strip()
-
-_STRUCTURED_PARSE_PROMPT = """
-Given OCR text from a historical cemetery burial card, extract only the core structured fields and return JSON only.
-
-Target fields:
-- owner_name
-- description
-- sex
-- age
-- undertaker
-- svc_no
-
-Rules:
-- Use only values explicitly present in the OCR text.
-- Do not infer missing values.
-- Ignore owner, relation, address, phone, grave fee, and board of health numbers even if they appear in the OCR text.
-- If a field is not present, return null.
 """.strip()
 
 _RESPONSE_SCHEMA: dict[str, Any] = {
@@ -56,20 +68,15 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
     "properties": {
         "raw_text": {"type": "STRING"},
         "card_confidence": {"type": "NUMBER"},
+        "fields": {
+            "type": "OBJECT",
+            "properties": {
+                field: {"type": "STRING", "nullable": True}
+                for field in CANONICAL_FIELDS
+            },
+        },
     },
-    "required": ["raw_text", "card_confidence"],
-}
-
-_STRUCTURED_RESPONSE_SCHEMA: dict[str, Any] = {
-    "type": "OBJECT",
-    "properties": {
-        "owner_name": {"type": "STRING", "nullable": True},
-        "description": {"type": "STRING", "nullable": True},
-        "sex": {"type": "STRING", "nullable": True},
-        "age": {"type": "STRING", "nullable": True},
-        "undertaker": {"type": "STRING", "nullable": True},
-        "svc_no": {"type": "STRING", "nullable": True},
-    },
+    "required": ["raw_text", "card_confidence", "fields"],
 }
 
 
@@ -79,17 +86,19 @@ def _gemini_config() -> dict[str, Any]:
 
 def _api_key() -> str:
     cfg = _gemini_config()
-    env_name = cfg.get("api_key_env", "GEMINI_API_KEY")
+    env_name = str(cfg.get("api_key_env", "GEMINI_API_KEY")).strip() or "GEMINI_API_KEY"
     value = os.getenv(env_name, "").strip()
+    if not value and env_name == "GEMINI_API_KEY":
+        value = os.getenv("GOOGLE_API_KEY", "").strip()
     if not value:
-        raise RuntimeError(
+        raise OCRProviderError(
             f"Google AI OCR is enabled, but environment variable {env_name} is not set."
         )
     return value
 
 
 def _model_name() -> str:
-    return str(_gemini_config().get("model", "gemma-4-31b")).strip()
+    return str(_gemini_config().get("model", "gemini-2.5-flash")).strip()
 
 
 def gemini_engine_version() -> str:
@@ -103,10 +112,6 @@ def _endpoint_url() -> str:
 
 def _timeout_seconds() -> float:
     return float(_gemini_config().get("timeout_seconds", 30))
-
-
-def _structured_fallback_enabled() -> bool:
-    return bool(_gemini_config().get("structured_fallback", True))
 
 
 def _extract_text_part(payload: dict[str, Any]) -> str:
@@ -144,6 +149,21 @@ def _extract_json_text(text: str) -> str:
     return cleaned
 
 
+def _normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_fields(raw_fields: Any) -> dict[str, str | None]:
+    payload = raw_fields if isinstance(raw_fields, dict) else {}
+    normalized: dict[str, str | None] = {}
+    for key in CANONICAL_FIELDS:
+        normalized[key] = _normalize_optional_text(payload.get(key))
+    return normalized
+
+
 def _normalize_result(data: dict[str, Any]) -> dict[str, Any]:
     raw_text = str(data.get("raw_text") or "").strip()
 
@@ -151,23 +171,25 @@ def _normalize_result(data: dict[str, Any]) -> dict[str, Any]:
         card_confidence = float(data.get("card_confidence", 0.0) or 0.0)
     except (TypeError, ValueError):
         card_confidence = 0.0
-
     card_confidence = max(0.0, min(1.0, card_confidence))
 
     return {
         "raw_text": raw_text,
         "words": [],
         "card_confidence": card_confidence,
+        "fields": _normalize_fields(data.get("fields")),
     }
 
 
 def _post_json(payload: dict[str, Any]) -> dict[str, Any]:
+    api_key = _api_key()
+    env_name = str(_gemini_config().get("api_key_env", "GEMINI_API_KEY")).strip() or "GEMINI_API_KEY"
     req = request.Request(
         _endpoint_url(),
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
-            "x-goog-api-key": _api_key(),
+            "x-goog-api-key": api_key,
         },
         method="POST",
     )
@@ -177,50 +199,28 @@ def _post_json(payload: dict[str, Any]) -> dict[str, Any]:
             return json.loads(resp.read().decode("utf-8"))
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Google AI OCR request failed: HTTP {exc.code} {detail}") from exc
+        if "API_KEY_INVALID" in detail or "API Key not found" in detail:
+            raise OCRProviderError(
+                "Google AI OCR API key was rejected. "
+                f"Checked env var: {env_name} (len={len(api_key)}). "
+                "Verify the key belongs to the intended AI Studio project and "
+                "that API/Application restrictions allow Generative Language API calls."
+            ) from exc
+        raise OCRProviderError(
+            f"Google AI OCR request failed: HTTP {exc.code} {detail}"
+        ) from exc
     except error.URLError as exc:
-        raise RuntimeError(f"Google AI OCR request failed: {exc.reason}") from exc
+        raise OCRProviderError(f"Google AI OCR request failed: {exc.reason}") from exc
 
 
 def parse_structured_fields_with_gemini(raw_text: str) -> dict[str, Any]:
-    if not raw_text.strip() or not _structured_fallback_enabled():
+    """
+    Legacy helper kept for compatibility.
+    Production extraction should use run_gemini single-pass output.
+    """
+    if not raw_text.strip():
         return {}
-
-    payload = {
-        "systemInstruction": {
-            "parts": [{"text": _SYSTEM_INSTRUCTION}],
-        },
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"text": _STRUCTURED_PARSE_PROMPT},
-                    {"text": raw_text},
-                ],
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0,
-            "responseMimeType": "application/json",
-            "responseSchema": _STRUCTURED_RESPONSE_SCHEMA,
-        },
-    }
-
-    body = _post_json(payload)
-    text = _extract_text_part(body)
-    try:
-        parsed = json.loads(_extract_json_text(text))
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Google AI OCR returned invalid JSON: {text}") from exc
-
-    out: dict[str, Any] = {}
-    for key, value in parsed.items():
-        if value is None:
-            out[key] = None
-        else:
-            text_value = str(value).strip()
-            out[key] = text_value or None
-    return out
+    return {}
 
 
 def run_gemini(image: np.ndarray) -> dict[str, Any]:

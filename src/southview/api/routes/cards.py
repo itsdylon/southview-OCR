@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from southview.config import get_config
 from southview.db.engine import get_session
-from southview.db.models import Card
+from southview.db.models import Card, STRUCTURED_OCR_FIELDS
 from southview.review.service import (
     list_cards as svc_list_cards,
     get_card_detail as svc_get_card_detail,
@@ -18,16 +18,7 @@ from southview.review.service import (
 
 router = APIRouter(tags=["cards"])
 
-STRUCTURED_FIELDS = [
-    "deceased_name",
-    "date_of_death",
-    "date_of_burial",
-    "description",
-    "sex",
-    "age",
-    "undertaker",
-    "svc_no",
-]
+STRUCTURED_FIELDS = list(STRUCTURED_OCR_FIELDS)
 
 
 def _image_url(image_path: str) -> str | None:
@@ -85,7 +76,20 @@ class CardDetailResponse(BaseModel):
     reviewed_by: str | None = None
     reviewed_at: str | None = None
     deceased_name: str | None = None
+    address: str | None = None
+    owner: str | None = None
+    relation: str | None = None
+    phone: str | None = None
     date_of_death: str | None = None
+    date_of_burial: str | None = None
+    description: str | None = None
+    sex: str | None = None
+    age: str | None = None
+    grave_type: str | None = None
+    grave_fee: str | None = None
+    undertaker: str | None = None
+    board_of_health_no: str | None = None
+    svc_no: str | None = None
     error_message: str | None = None
 
 

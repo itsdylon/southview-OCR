@@ -1,5 +1,6 @@
 """API integration tests for video endpoints."""
 
+import json
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -119,3 +120,83 @@ class TestGetEndpoint:
         """GET /api/videos/{bad_id} returns 404."""
         resp = client.get("/api/videos/nonexistent-uuid")
         assert resp.status_code == 404
+
+
+class TestBlurQueueEndpoint:
+    def test_blur_queue_404_when_missing(self, client, tmp_config):
+        with patch("southview.api.routes.videos.get_config", return_value=tmp_config):
+            resp = client.get("/api/videos/no-manifest/blur-queue")
+        assert resp.status_code == 404
+
+    def test_blur_queue_returns_paginated_items(self, client, tmp_config):
+        video_id = "video-123"
+        frames_root = Path(tmp_config["storage"]["frames_dir"])
+        video_dir = frames_root / video_id
+        video_dir.mkdir(parents=True, exist_ok=True)
+
+        decisions = [
+            {"decision": "accepted", "frame_number": 1, "segment_index": 1},
+            {
+                "decision": "rejected_blur",
+                "frame_number": 2,
+                "segment_index": 2,
+                "sharpness": 12.3,
+                "image_path": str(video_dir / "rejected_blur" / "a.jpg"),
+                "reason": "below_blur_threshold",
+            },
+            {
+                "decision": "rejected_blur",
+                "frame_number": 3,
+                "segment_index": 3,
+                "sharpness": 8.9,
+                "image_path": str(video_dir / "rejected_blur" / "b.jpg"),
+                "reason": "below_blur_threshold",
+            },
+            {"decision": "rejected_dedup", "frame_number": 4, "segment_index": 4},
+            {
+                "decision": "rejected_blur",
+                "frame_number": 5,
+                "segment_index": 5,
+                "sharpness": 5.1,
+                "image_path": str(video_dir / "rejected_blur" / "c.jpg"),
+                "reason": "below_blur_threshold",
+            },
+        ]
+        (video_dir / "extraction_decisions.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in decisions) + "\n",
+            encoding="utf-8",
+        )
+
+        manifest = {
+            "video_id": video_id,
+            "counts": {
+                "accepted": 1,
+                "rejected_blur": 3,
+                "rejected_dedup": 1,
+            },
+        }
+        (video_dir / "extraction_manifest.json").write_text(
+            json.dumps(manifest),
+            encoding="utf-8",
+        )
+
+        with patch("southview.api.routes.videos.get_config", return_value=tmp_config):
+            resp = client.get(f"/api/videos/{video_id}/blur-queue?page=1&per_page=2")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["video_id"] == video_id
+        assert body["total"] == 3
+        assert body["page"] == 1
+        assert body["per_page"] == 2
+        assert body["pages"] == 2
+        assert len(body["items"]) == 2
+        assert body["items"][0]["frame_number"] == 2
+        assert body["items"][1]["frame_number"] == 3
+        assert body["counts"]["rejected_blur"] == 3
+
+        with patch("southview.api.routes.videos.get_config", return_value=tmp_config):
+            resp2 = client.get(f"/api/videos/{video_id}/blur-queue?page=2&per_page=2")
+        assert resp2.status_code == 200
+        body2 = resp2.json()
+        assert len(body2["items"]) == 1
+        assert body2["items"][0]["frame_number"] == 5

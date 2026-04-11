@@ -51,6 +51,16 @@ def _validate_extension(file_path: Path) -> None:
         )
 
 
+def _stored_video_path(existing: Video, source_file: Path, dest_dir: Path) -> Path:
+    """Compute canonical on-disk path for an existing deduplicated video row."""
+    current_path = Path(existing.filepath) if existing.filepath else None
+    if current_path and current_path.suffix:
+        suffix = current_path.suffix
+    else:
+        suffix = Path(existing.filename).suffix or source_file.suffix
+    return dest_dir / f"{existing.id}{suffix}"
+
+
 def upload_video(file_path: str | Path) -> Video:
     """
     Ingest a video file: compute hash, check for duplicates, store, and create DB record.
@@ -72,6 +82,21 @@ def upload_video(file_path: str | Path) -> Video:
             select(Video).filter_by(file_hash=file_hash)
         ).scalar_one_or_none()
         if existing:
+            # Source videos are deleted after successful processing. If a duplicate is
+            # uploaded later, restore the file so the same video ID can be reprocessed.
+            existing_path = Path(existing.filepath) if existing.filepath else None
+            has_existing_source = bool(existing_path and existing_path.exists())
+            if not has_existing_source:
+                config = get_config()
+                dest_dir = Path(config["storage"]["videos_dir"])
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                _check_disk_space(dest_dir, file_path.stat().st_size)
+
+                restored_path = _stored_video_path(existing, file_path, dest_dir)
+                shutil.copy2(file_path, restored_path)
+                existing.filepath = str(restored_path)
+                session.commit()
+
             session.expunge(existing)
             return existing
 

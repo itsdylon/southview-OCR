@@ -1,15 +1,15 @@
 """Video upload and listing endpoints."""
 
+import json
+import math
 import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel
 
 from southview.config import get_config
-from southview.db.engine import get_session
-from southview.db.models import Video
 from southview.ingest.video_upload import (
     SUPPORTED_EXTENSIONS,
     get_video as svc_get_video,
@@ -49,7 +49,7 @@ class VideoListItem(BaseModel):
 class VideoDetailResponse(BaseModel):
     id: str
     filename: str
-    filepath: str
+    filepath: str | None
     status: str
     file_hash: str
     upload_timestamp: str | None
@@ -169,9 +169,70 @@ def get_video_endpoint(video_id: str):
     )
 
 
+@router.get("/videos/{video_id}/blur-queue")
+def get_blur_queue(
+    video_id: str,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(100, ge=1, le=1000),
+):
+    """List blurred frames captured during extraction (list-only queue)."""
+    frames_root = Path(get_config()["storage"]["frames_dir"])
+    video_dir = frames_root / video_id
+    decisions_path = video_dir / "extraction_decisions.jsonl"
+    manifest_path = video_dir / "extraction_manifest.json"
+
+    if not decisions_path.exists() or not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="Blur queue not found for video")
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        manifest = {}
+
+    start = (page - 1) * per_page
+    end = start + per_page
+    total = 0
+    items = []
+
+    with decisions_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("decision") != "rejected_blur":
+                continue
+            if start <= total < end:
+                items.append({
+                    "segment_index": row.get("segment_index"),
+                    "frame_number": row.get("frame_number"),
+                    "sharpness": row.get("sharpness"),
+                    "image_path": row.get("image_path"),
+                    "reason": row.get("reason"),
+                })
+            total += 1
+
+    pages = math.ceil(total / per_page) if total else 0
+    return {
+        "video_id": video_id,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": pages,
+        "counts": manifest.get("counts", {}),
+        "items": items,
+    }
+
+
 @router.delete("/videos/{video_id}", status_code=204)
 def delete_video_endpoint(video_id: str):
     """Delete a video and all associated jobs/cards/results/files."""
+    from southview.db.engine import get_session
+    from southview.db.models import Video
+
     session = get_session()
     try:
         video = session.query(Video).get(video_id)

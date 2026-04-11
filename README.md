@@ -154,3 +154,22 @@ GEMINI_API_KEY=<production-key>
 - Do not commit real production session secrets.
 - If the admin password has been shared in an insecure place, rotate it by generating a new hash and updating deployment env vars.
 - If you change the session secret, existing sessions will be invalidated, which is expected.
+
+## Gemini OCR bake-off
+
+To run model bake-off with Gemini, set one of these env vars:
+
+```bash
+export GEMINI_API_KEY="your-api-key"
+# or
+export GOOGLE_API_KEY="your-api-key"
+```
+
+Run:
+
+```bash
+python -m southview bakeoff run \
+  --manifest data/bakeoff/manifest.csv \
+  --out-dir data/bakeoff/runs/latest \
+  --models gemini-2.0-flash
+```
