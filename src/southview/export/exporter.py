@@ -60,6 +60,11 @@ def _query_cards(video_id: str | None = None, status: str | None = None) -> list
         session.close()
 
 
+def has_export_rows(video_id: str | None = None, status: str | None = None) -> bool:
+    """Return whether export filters match at least one card row."""
+    return bool(_query_cards(video_id=video_id, status=status))
+
+
 def export_csv(
     output_path: str | Path | None = None,
     video_id: str | None = None,
