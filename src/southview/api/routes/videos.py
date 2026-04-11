@@ -80,6 +80,14 @@ def _safe_upload_name(filename: str | None, fallback_suffix: str) -> str:
     return safe_name
 
 
+def _require_video(video_id: str):
+    """Look up a video first so path parameters cannot become filesystem paths."""
+    video = svc_get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return video
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -159,9 +167,7 @@ def list_videos_endpoint(status: str | None = None):
 @router.get("/videos/{video_id}", response_model=VideoDetailResponse)
 def get_video_endpoint(video_id: str):
     """Get video details."""
-    video = svc_get_video(video_id)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
+    video = _require_video(video_id)
     return VideoDetailResponse(
         id=video.id,
         filename=video.filename,
@@ -185,8 +191,9 @@ def get_blur_queue(
     per_page: int = Query(100, ge=1, le=1000),
 ):
     """List blurred frames captured during extraction (list-only queue)."""
+    video = _require_video(video_id)
     frames_root = Path(get_config()["storage"]["frames_dir"])
-    video_dir = frames_root / video_id
+    video_dir = frames_root / video.id
     decisions_path = video_dir / "extraction_decisions.jsonl"
     manifest_path = video_dir / "extraction_manifest.json"
 
@@ -226,7 +233,7 @@ def get_blur_queue(
 
     pages = math.ceil(total / per_page) if total else 0
     return {
-        "video_id": video_id,
+        "video_id": video.id,
         "total": total,
         "page": page,
         "per_page": per_page,

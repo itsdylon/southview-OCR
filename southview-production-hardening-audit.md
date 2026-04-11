@@ -32,6 +32,7 @@ safe_name = re.sub(r'[^\w.\-]', '_', Path(file.filename or "upload.mp4").name)
 ### 1.2 P0 — Path traversal on video_id in blur-queue endpoint
 
 **File:** `src/southview/api/routes/videos.py:179-180`
+**Status:** Closed on 2026-04-11. The originally documented `../../../etc/passwd` exploit path was overstated because FastAPI route matching does not pass multi-segment values through this parameter. There was still an avoidable filesystem trust issue for reachable single-segment values such as `..`, so the endpoint now requires a real video row first and only builds filesystem paths from the canonical database ID.
 
 `video_id` is used directly in path construction (`frames_root / video_id`). An attacker can pass `../../../etc/passwd` as the video_id to read arbitrary files from disk via the returned `image_path` values.
 

@@ -141,13 +141,23 @@ class TestGetEndpoint:
 
 
 class TestBlurQueueEndpoint:
-    def test_blur_queue_404_when_missing(self, client, tmp_config):
-        with patch("southview.api.routes.videos.get_config", return_value=tmp_config):
-            resp = client.get("/api/videos/no-manifest/blur-queue")
+    def test_blur_queue_404_when_video_missing(self, client, tmp_config, monkeypatch):
+        def fail_if_called():
+            raise AssertionError("filesystem config should not be read for unknown videos")
+
+        monkeypatch.setattr("southview.api.routes.videos.get_config", fail_if_called)
+        resp = client.get("/api/videos/no-manifest/blur-queue")
         assert resp.status_code == 404
 
-    def test_blur_queue_returns_paginated_items(self, client, tmp_config):
-        video_id = "video-123"
+    def test_blur_queue_returns_paginated_items(self, client, tiny_mp4, tmp_config):
+        with open(tiny_mp4, "rb") as f:
+            upload_resp = client.post(
+                "/api/videos/upload",
+                files={"file": ("test.mp4", f, "video/mp4")},
+            )
+
+        assert upload_resp.status_code == 200
+        video_id = upload_resp.json()["id"]
         frames_root = Path(tmp_config["storage"]["frames_dir"])
         video_dir = frames_root / video_id
         video_dir.mkdir(parents=True, exist_ok=True)
@@ -218,3 +228,11 @@ class TestBlurQueueEndpoint:
         body2 = resp2.json()
         assert len(body2["items"]) == 1
         assert body2["items"][0]["frame_number"] == 5
+
+    def test_blur_queue_rejects_parent_directory_ids_before_filesystem_access(self, client, monkeypatch):
+        def fail_if_called():
+            raise AssertionError("filesystem config should not be read for invalid IDs")
+
+        monkeypatch.setattr("southview.api.routes.videos.get_config", fail_if_called)
+        resp = client.get("/api/videos/%2e%2e/blur-queue")
+        assert resp.status_code == 404
