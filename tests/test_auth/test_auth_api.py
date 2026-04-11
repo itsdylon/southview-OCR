@@ -100,3 +100,27 @@ def test_secure_cookies_can_be_disabled_in_development():
         clear=True,
     ):
         assert get_auth_settings().secure_cookies is False
+
+
+def test_login_rate_limits_after_repeated_failures(tmp_config, monkeypatch):
+    now = {"value": 1_000.0}
+
+    monkeypatch.setattr("southview.api.routes.auth._FAILED_LOGIN_ATTEMPTS", {})
+    monkeypatch.setattr("southview.api.routes.auth._LOGIN_LOCKOUTS", {})
+    monkeypatch.setattr("southview.api.routes.auth.time.time", lambda: now["value"])
+
+    with make_client(tmp_config) as client:
+        for _ in range(5):
+            response = client.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "wrong-password"},
+            )
+            assert response.status_code == 401
+
+        limited = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "wrong-password"},
+        )
+
+    assert limited.status_code == 429
+    assert "Too many login attempts" in limited.json()["detail"]

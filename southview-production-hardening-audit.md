@@ -101,6 +101,7 @@ Cookie-based auth without CSRF tokens means any cross-origin page (if CORS is mi
 ### 1.9 P1 — No rate limiting on login endpoint
 
 **File:** `src/southview/api/routes/auth.py:35-52`
+**Status:** Closed on 2026-04-11. Real concern even for an internal VPS deployment because the login endpoint is still network-exposed and there is only one admin account to protect. The route now applies a lightweight in-memory per-client throttle suited to the current single-instance topology: 5 failed attempts within 60 seconds triggers a 15-minute lockout.
 
 The login endpoint has no rate limiting or account lockout. With a single admin account and potentially weak password, brute-force attacks are straightforward.
 
