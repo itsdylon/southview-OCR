@@ -10,6 +10,7 @@ from southview.api.app import create_app
 from southview.auth import hash_password
 from southview.db.engine import get_session
 from southview.db.models import Job, Video
+from southview.api.routes.jobs import _run_job_safely
 
 
 class _DummyThread:
@@ -156,3 +157,12 @@ def test_app_startup_marks_running_jobs_as_failed(tmp_config):
         assert recovered_video.status == "failed"
     finally:
         verify_session.close()
+
+
+def test_run_job_safely_swallows_pipeline_exceptions(monkeypatch):
+    monkeypatch.setattr(
+        "southview.api.routes.jobs.run_full_pipeline",
+        lambda _job_id, _video_id: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    _run_job_safely("job-1", "video-1")

@@ -228,6 +228,7 @@ When `OCRProviderError` is raised (e.g., API key invalid, quota exceeded), the e
 ### 2.7 P1 — Exception re-raised from background thread
 
 **File:** `src/southview/jobs/runner.py:148-164`
+**Status:** Closed on 2026-04-12 with no code change to `run_full_pipeline()`. After review, this concern was overstated for the current architecture: all API-started pipeline threads already run through `_run_job_safely()`, which catches and contains the re-raised exception after the job has been marked failed. I kept the `raise` in place because the CLI `process` command calls `run_full_pipeline()` directly and should still surface failures to the operator; regression coverage now locks in the thread-wrapper behavior this decision depends on.
 
 After marking the job as failed, the exception is re-raised (`raise` on line 164). This causes the daemon thread to terminate with an unhandled exception. While `_run_job_safely` in `jobs.py:22-27` catches it, the pattern is fragile.
 
