@@ -110,6 +110,7 @@ The login endpoint has no rate limiting or account lockout. With a single admin 
 ### 1.10 P1 — No rate limiting or size limit on upload endpoint *
 
 **File:** `src/southview/api/routes/videos.py:78-112`
+**Status:** Closed on 2026-04-12. Real concern even for an internal VPS deployment because accidental oversized uploads are plausible and concurrent multi-gigabyte uploads can still exhaust disk or tie up the service. The upload route now enforces a configurable byte limit while streaming and applies a lightweight in-memory per-client concurrent upload cap that matches the current single-instance architecture.
 
 No app-level max file size, no rate limit per IP/session, no concurrent upload limit. An attacker can fill disk with large files or starve workers with many simultaneous uploads.
 

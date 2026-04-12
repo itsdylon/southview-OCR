@@ -4,9 +4,10 @@ import json
 import math
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel
 
 from southview.config import get_config
@@ -17,6 +18,10 @@ from southview.ingest.video_upload import (
 )
 
 router = APIRouter(tags=["videos"])
+_DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
+_DEFAULT_MAX_CONCURRENT_UPLOADS_PER_CLIENT = 2
+_ACTIVE_UPLOADS_BY_CLIENT: dict[str, int] = {}
+_UPLOAD_LIMIT_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -88,12 +93,48 @@ def _require_video(video_id: str):
     return video
 
 
+def _upload_limits() -> tuple[int, int]:
+    config = get_config().get("api", {})
+    max_upload_bytes = int(config.get("max_upload_bytes", _DEFAULT_MAX_UPLOAD_BYTES))
+    max_concurrent = int(
+        config.get(
+            "max_concurrent_uploads_per_client",
+            _DEFAULT_MAX_CONCURRENT_UPLOADS_PER_CLIENT,
+        )
+    )
+    return max(1, max_upload_bytes), max(1, max_concurrent)
+
+
+def _upload_client_key(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _reserve_upload_slot(client_key: str, max_concurrent: int) -> bool:
+    with _UPLOAD_LIMIT_LOCK:
+        active = _ACTIVE_UPLOADS_BY_CLIENT.get(client_key, 0)
+        if active >= max_concurrent:
+            return False
+        _ACTIVE_UPLOADS_BY_CLIENT[client_key] = active + 1
+    return True
+
+
+def _release_upload_slot(client_key: str) -> None:
+    with _UPLOAD_LIMIT_LOCK:
+        active = _ACTIVE_UPLOADS_BY_CLIENT.get(client_key, 0)
+        if active <= 1:
+            _ACTIVE_UPLOADS_BY_CLIENT.pop(client_key, None)
+        else:
+            _ACTIVE_UPLOADS_BY_CLIENT[client_key] = active - 1
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
 @router.post("/videos/upload", response_model=VideoUploadResponse)
-async def upload_video_endpoint(file: UploadFile = File(...)):
+async def upload_video_endpoint(request: Request, file: UploadFile = File(...)):
     """Upload a video file for processing."""
     suffix = Path(file.filename or "video.mp4").suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
@@ -103,13 +144,30 @@ async def upload_video_endpoint(file: UploadFile = File(...)):
             f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
         )
 
+    max_upload_bytes, max_concurrent_uploads = _upload_limits()
+    client_key = _upload_client_key(request)
+    if not _reserve_upload_slot(client_key, max_concurrent_uploads):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many uploads in progress for this client. Try again after one finishes.",
+        )
+
     tmp_dir = tempfile.mkdtemp()
     original_name = _safe_upload_name(file.filename, suffix)
     tmp_path = Path(tmp_dir) / original_name
+    upload_slot_reserved = True
     try:
         # Stream the upload in chunks instead of reading entirely into memory
+        bytes_written = 0
         with open(tmp_path, "wb") as f_out:
-            shutil.copyfileobj(file.file, f_out)
+            while chunk := file.file.read(1024 * 1024):
+                bytes_written += len(chunk)
+                if bytes_written > max_upload_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large. Maximum size is {max_upload_bytes} bytes.",
+                    )
+                f_out.write(chunk)
 
         video = upload_video(tmp_path)
         return VideoUploadResponse(
@@ -123,9 +181,14 @@ async def upload_video_endpoint(file: UploadFile = File(...)):
             fps=video.fps,
             frame_count=video.frame_count,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     finally:
+        if upload_slot_reserved:
+            _release_upload_slot(client_key)
+        await file.close()
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 

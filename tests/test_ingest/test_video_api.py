@@ -98,6 +98,49 @@ class TestUploadEndpoint:
         assert resp.json()["filename"] == "escape.mp4"
         assert not leaked_path.exists()
 
+    def test_upload_rejects_files_over_size_limit(self, client, tiny_mp4, monkeypatch, tmp_config):
+        limited_config = {
+            **tmp_config,
+            "api": {"max_upload_bytes": 4},
+        }
+        monkeypatch.setattr("southview.api.routes.videos.get_config", lambda: limited_config)
+
+        with open(tiny_mp4, "rb") as f:
+            resp = client.post(
+                "/api/videos/upload",
+                files={"file": ("test.mp4", f, "video/mp4")},
+            )
+
+        assert resp.status_code == 413
+        assert "File too large" in resp.json()["detail"]
+
+    def test_upload_rejects_when_client_has_too_many_active_uploads(
+        self,
+        client,
+        tiny_mp4,
+        monkeypatch,
+        tmp_config,
+    ):
+        limited_config = {
+            **tmp_config,
+            "api": {"max_concurrent_uploads_per_client": 2},
+        }
+        monkeypatch.setattr("southview.api.routes.videos.get_config", lambda: limited_config)
+        monkeypatch.setattr("southview.api.routes.videos._upload_client_key", lambda _request: "test-client")
+        monkeypatch.setattr(
+            "southview.api.routes.videos._ACTIVE_UPLOADS_BY_CLIENT",
+            {"test-client": 2},
+        )
+
+        with open(tiny_mp4, "rb") as f:
+            resp = client.post(
+                "/api/videos/upload",
+                files={"file": ("test.mp4", f, "video/mp4")},
+            )
+
+        assert resp.status_code == 429
+        assert "Too many uploads in progress" in resp.json()["detail"]
+
 
 class TestListEndpoint:
     def test_list_empty(self, client):
