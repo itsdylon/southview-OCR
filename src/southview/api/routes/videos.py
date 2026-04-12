@@ -3,8 +3,8 @@
 import json
 import math
 import shutil
-import tempfile
 import threading
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
@@ -77,7 +77,7 @@ def _resolution_str(w: int | None, h: int | None) -> str | None:
 
 
 def _safe_upload_name(filename: str | None, fallback_suffix: str) -> str:
-    """Return a basename-only filename safe to use under a temp directory."""
+    """Return a basename-only filename safe to use under storage staging paths."""
     raw_name = (filename or "").replace("\\", "/")
     safe_name = Path(raw_name).name
     if safe_name in {"", ".", ".."}:
@@ -103,6 +103,16 @@ def _upload_limits() -> tuple[int, int]:
         )
     )
     return max(1, max_upload_bytes), max(1, max_concurrent)
+
+
+def _videos_dir() -> Path:
+    videos_dir = Path(get_config()["storage"]["videos_dir"])
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    return videos_dir
+
+
+def _staged_upload_path(suffix: str) -> Path:
+    return _videos_dir() / f".upload-{uuid.uuid4().hex}{suffix}"
 
 
 def _upload_client_key(request: Request) -> str:
@@ -152,9 +162,8 @@ def upload_video_endpoint(request: Request, file: UploadFile = File(...)):
             detail="Too many uploads in progress for this client. Try again after one finishes.",
         )
 
-    tmp_dir = tempfile.mkdtemp()
     original_name = _safe_upload_name(file.filename, suffix)
-    tmp_path = Path(tmp_dir) / original_name
+    tmp_path = _staged_upload_path(suffix)
     upload_slot_reserved = True
     try:
         # Stream the upload in chunks instead of reading entirely into memory
@@ -169,7 +178,7 @@ def upload_video_endpoint(request: Request, file: UploadFile = File(...)):
                     )
                 f_out.write(chunk)
 
-        video = upload_video(tmp_path)
+        video = upload_video(tmp_path, original_filename=original_name, move_source=True)
         return VideoUploadResponse(
             id=video.id,
             filename=video.filename,
@@ -195,7 +204,8 @@ def upload_video_endpoint(request: Request, file: UploadFile = File(...)):
         if upload_slot_reserved:
             _release_upload_slot(client_key)
         file.file.close()
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
 
 
 @router.get("/videos", response_model=list[VideoListItem])

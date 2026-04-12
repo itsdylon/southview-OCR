@@ -103,6 +103,16 @@ class TestUploadVideo:
         with pytest.raises(ValueError, match="Could not open video"):
             upload_video(bad)
 
+    def test_upload_move_source_renames_staged_file_into_storage(self, tmp_db, tmp_config, tiny_mp4, tmp_path):
+        staged = tmp_path / ".upload-stage.mp4"
+        staged.write_bytes(tiny_mp4.read_bytes())
+
+        video = upload_video(staged, original_filename="original.mp4", move_source=True)
+
+        assert video.filename == "original.mp4"
+        assert Path(video.filepath).exists()
+        assert not staged.exists()
+
 
 # ---------------------------------------------------------------------------
 # get_video / list_videos

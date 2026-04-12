@@ -246,6 +246,7 @@ The catch-all `except Exception as e: raise HTTPException(status_code=400, ...)`
 ### 2.9 P2 — Double disk write during upload ingest *
 
 **File:** `src/southview/api/routes/videos.py:89-95`, `src/southview/ingest/video_upload.py:127`
+**Status:** Closed on 2026-04-12. Real concern for this workload because the application handles large video files, so copying a fully written upload a second time wastes both time and disk I/O. Uploads are now staged directly inside the videos storage directory and the ingest service renames that staged file into place when persisting a new video or restoring a missing deduped source.
 
 The file is first written to a temp directory, then copied to final storage. For multi-gigabyte videos this doubles write time and disk pressure.
 

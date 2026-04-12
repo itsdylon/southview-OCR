@@ -81,12 +81,11 @@ class TestUploadEndpoint:
         assert "Unsupported file extension" in resp.json()["detail"]
 
     def test_upload_strips_path_components_from_filename(self, client, tiny_mp4, monkeypatch, tmp_path):
-        """Upload temp writes stay inside the temp directory even with traversal names."""
-        upload_tmp = tmp_path / "upload-tmp"
-        upload_tmp.mkdir()
+        """Upload staging stays under the configured storage area even with traversal names."""
+        staged_upload = tmp_path / ".upload-stage.mp4"
         leaked_path = tmp_path / "escape.mp4"
 
-        monkeypatch.setattr("southview.api.routes.videos.tempfile.mkdtemp", lambda: str(upload_tmp))
+        monkeypatch.setattr("southview.api.routes.videos._staged_upload_path", lambda _suffix: staged_upload)
 
         with open(tiny_mp4, "rb") as f:
             resp = client.post(
@@ -97,6 +96,7 @@ class TestUploadEndpoint:
         assert resp.status_code == 200
         assert resp.json()["filename"] == "escape.mp4"
         assert not leaked_path.exists()
+        assert not staged_upload.exists()
 
     def test_upload_rejects_files_over_size_limit(self, client, tiny_mp4, monkeypatch, tmp_config):
         limited_config = {
@@ -144,7 +144,7 @@ class TestUploadEndpoint:
     def test_upload_returns_500_for_storage_errors(self, client, tiny_mp4, monkeypatch):
         monkeypatch.setattr(
             "southview.api.routes.videos.upload_video",
-            lambda _path: (_ for _ in ()).throw(OSError("disk full")),
+            lambda _path, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
         )
 
         with open(tiny_mp4, "rb") as f:
