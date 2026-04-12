@@ -63,3 +63,4 @@ backup:
 api:
   host: 0.0.0.0
   port: 8000
+  staged_upload_cleanup_age_seconds: 86400

@@ -156,6 +156,38 @@ class TestUploadEndpoint:
         assert resp.status_code == 500
         assert resp.json()["detail"] == "Server could not store the uploaded file."
 
+    def test_cleanup_stale_staged_uploads_removes_only_old_staging_files(self, tmp_config, monkeypatch):
+        from southview.api.routes import videos as video_routes
+
+        videos_dir = Path(tmp_config["storage"]["videos_dir"])
+        videos_dir.mkdir(parents=True, exist_ok=True)
+        stale_upload = videos_dir / ".upload-stale.mp4"
+        fresh_upload = videos_dir / ".upload-fresh.mp4"
+        real_video = videos_dir / "real-video.mp4"
+        stale_upload.write_bytes(b"stale")
+        fresh_upload.write_bytes(b"fresh")
+        real_video.write_bytes(b"real")
+
+        now = 1_000_000.0
+        os.utime(stale_upload, (now - 120, now - 120))
+        os.utime(fresh_upload, (now - 10, now - 10))
+
+        monkeypatch.setattr(
+            video_routes,
+            "get_config",
+            lambda: {
+                **tmp_config,
+                "api": {"staged_upload_cleanup_age_seconds": 60},
+            },
+        )
+
+        removed = video_routes.cleanup_stale_staged_uploads(now=now)
+
+        assert removed == 1
+        assert not stale_upload.exists()
+        assert fresh_upload.exists()
+        assert real_video.exists()
+
 
 class TestListEndpoint:
     def test_list_empty(self, client):

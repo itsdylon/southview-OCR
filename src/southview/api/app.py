@@ -74,6 +74,9 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def startup():
         init_db(config["database"]["path"])
+        from southview.api.routes.videos import cleanup_stale_staged_uploads
+
+        cleanup_stale_staged_uploads()
         fail_running_jobs_on_startup()
 
     # Mount static frames directory BEFORE any catch-all route

@@ -1,9 +1,11 @@
 """Video upload and listing endpoints."""
 
 import json
+import logging
 import math
 import shutil
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -18,8 +20,10 @@ from southview.ingest.video_upload import (
 )
 
 router = APIRouter(tags=["videos"])
+logger = logging.getLogger(__name__)
 _DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
 _DEFAULT_MAX_CONCURRENT_UPLOADS_PER_CLIENT = 2
+_DEFAULT_STAGED_UPLOAD_CLEANUP_AGE_SECONDS = 24 * 60 * 60
 _ACTIVE_UPLOADS_BY_CLIENT: dict[str, int] = {}
 _UPLOAD_LIMIT_LOCK = threading.Lock()
 
@@ -113,6 +117,35 @@ def _videos_dir() -> Path:
 
 def _staged_upload_path(suffix: str) -> Path:
     return _videos_dir() / f".upload-{uuid.uuid4().hex}{suffix}"
+
+
+def _staged_upload_cleanup_age_seconds() -> int:
+    config = get_config().get("api", {})
+    age_seconds = int(
+        config.get(
+            "staged_upload_cleanup_age_seconds",
+            _DEFAULT_STAGED_UPLOAD_CLEANUP_AGE_SECONDS,
+        )
+    )
+    return max(60, age_seconds)
+
+
+def cleanup_stale_staged_uploads(*, now: float | None = None) -> int:
+    cutoff = (time.time() if now is None else now) - _staged_upload_cleanup_age_seconds()
+    removed = 0
+    for staged_path in _videos_dir().glob(".upload-*"):
+        try:
+            if not staged_path.is_file():
+                continue
+            if staged_path.stat().st_mtime > cutoff:
+                continue
+            staged_path.unlink(missing_ok=True)
+            removed += 1
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            logger.warning("Could not delete stale staged upload %s: %s", staged_path, exc)
+    return removed
 
 
 def _upload_client_key(request: Request) -> str:

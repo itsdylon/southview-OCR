@@ -255,6 +255,7 @@ The file is first written to a temp directory, then copied to final storage. For
 ### 2.10 P2 — Temp directory leak on crash
 
 **File:** `src/southview/api/routes/videos.py:89-112`
+**Status:** Closed on 2026-04-12. Real concern, although lower impact on a single internal VPS than on a multi-tenant system: after the `2.9` staging change, the failure mode became stale `.upload-*` files in `videos_dir` rather than leaked temp directories, but a hard kill during a large upload could still strand significant disk usage. The app now sweeps stale staged-upload files on startup using a configurable age threshold, which is a good fit for this service’s restart-driven deployment model without adding a background janitor.
 
 `tempfile.mkdtemp()` is used with a manual `finally` cleanup. If the process is killed (SIGKILL, OOM) between creation and cleanup, the temp directory is orphaned permanently.
 

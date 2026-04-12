@@ -70,3 +70,34 @@ def test_cors_uses_configured_origins_and_explicit_methods(tmp_path):
     assert response.headers["access-control-allow-origin"] == "https://southview.example"
     assert response.headers["access-control-allow-methods"] == "GET, POST, PUT, DELETE"
     assert response.headers["access-control-allow-headers"] == "Accept, Accept-Language, Content-Language, Content-Type"
+
+
+def test_startup_cleans_stale_staged_uploads(tmp_path):
+    config = _test_config(tmp_path)
+    videos_dir = Path(config["storage"]["videos_dir"])
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    stale_upload = videos_dir / ".upload-stale.mp4"
+    real_video = videos_dir / "real-video.mp4"
+    stale_upload.write_text("stale", encoding="utf-8")
+    real_video.write_text("real", encoding="utf-8")
+
+    now = 1_000_000.0
+    os.utime(stale_upload, (now - 120, now - 120))
+
+    with patch("southview.api.app.init_db"), \
+         patch("southview.api.app.get_config", return_value=config), \
+         patch(
+             "southview.api.routes.videos.get_config",
+             return_value={
+                 **config,
+                 "api": {"staged_upload_cleanup_age_seconds": 60},
+             },
+         ), \
+         patch("southview.api.routes.videos.time.time", return_value=now), \
+         patch("southview.api.app._FRONTEND_DIR", tmp_path / "missing-frontend"):
+        app = create_app()
+        with TestClient(app):
+            pass
+
+    assert not stale_upload.exists()
+    assert real_video.exists()
