@@ -63,6 +63,7 @@ class Video(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_status", "status"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     video_id: Mapped[str] = mapped_column(String(36), ForeignKey("videos.id", ondelete="CASCADE"), nullable=False)

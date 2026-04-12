@@ -321,6 +321,7 @@ Migrations run on every startup via custom functions with no version tracking. T
 ### 3.3 P2 — Missing database indexes on frequently queried columns
 
 **File:** `src/southview/db/models.py`
+**Status:** Closed on 2026-04-12. Partially real concern: `Card.video_id` was already indexed, so that half of the audit was outdated, but `Job.status` was genuinely unindexed and is used heavily by job-listing and recovery queries. The schema now defines `ix_jobs_status`, and startup also backfills both expected indexes for existing SQLite databases with `CREATE INDEX IF NOT EXISTS`.
 
 `Job.status` and `Card.video_id` are frequently filtered in queries but lack explicit indexes. As data grows, list queries will degrade.
 
