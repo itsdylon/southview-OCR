@@ -74,6 +74,7 @@ export interface OCRResult {
   // Metadata
   createdAt: string;
   updatedAt?: string;
+  reviewVersion: number;
   reviewedBy?: string;
 }
 

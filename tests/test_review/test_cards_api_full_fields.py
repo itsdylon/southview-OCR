@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from southview.api.app import create_app
+from southview.auth import hash_password
 from southview.db.engine import get_session
 from southview.db.models import Card, OCRResult, Video
 
@@ -13,9 +15,23 @@ from southview.db.models import Card, OCRResult, Video
 @pytest.fixture
 def client(tmp_path, tmp_db, tmp_config):
     config = tmp_config
-    with patch("southview.api.app.init_db"), patch("southview.api.app.get_config", return_value=config):
+    auth_env = {
+        "SOUTHVIEW_ENV": "development",
+        "SOUTHVIEW_AUTH_USERNAME": "admin",
+        "SOUTHVIEW_AUTH_PASSWORD_HASH": hash_password("test-password"),
+        "SOUTHVIEW_AUTH_SESSION_SECRET": "test-session-secret",
+        "SOUTHVIEW_AUTH_SECURE_COOKIES": "false",
+    }
+    with patch.dict(os.environ, auth_env, clear=False), \
+         patch("southview.api.app.init_db"), \
+         patch("southview.api.app.get_config", return_value=config):
         app = create_app()
         with TestClient(app) as c:
+            login_response = c.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "test-password"},
+            )
+            assert login_response.status_code == 200
             yield c
 
 
@@ -101,6 +117,7 @@ def test_review_update_round_trip_with_structured_fields_only(client):
 
     update = {
         "status": "corrected",
+        "review_version": 0,
         "deceased_name": "AARON, Ben",
         "grave_type": "Thrasher OS",
         "board_of_health_no": "BH-99",
@@ -113,6 +130,32 @@ def test_review_update_round_trip_with_structured_fields_only(client):
 
     ocr = detail.json()["ocr"]
     assert ocr["review_status"] == "corrected"
+    assert ocr["review_version"] == 1
     assert ocr["deceased_name"] == "AARON, Ben"
     assert ocr["grave_type"] == "Thrasher OS"
     assert ocr["board_of_health_no"] == "BH-99"
+
+
+def test_review_update_rejects_stale_review_version(client):
+    _, card_id = _seed_card_with_full_ocr()
+
+    first = client.put(
+        f"/api/cards/{card_id}/review",
+        json={
+            "status": "corrected",
+            "review_version": 0,
+            "deceased_name": "AARON, Ben",
+        },
+    )
+    assert first.status_code == 200
+
+    stale = client.put(
+        f"/api/cards/{card_id}/review",
+        json={
+            "status": "corrected",
+            "review_version": 0,
+            "deceased_name": "AARON, Benjamin",
+        },
+    )
+    assert stale.status_code == 409
+    assert "Refresh and retry" in stale.json()["detail"]

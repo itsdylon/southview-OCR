@@ -223,21 +223,38 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
   );
 
   const updateCardFields = useCallback((cardId: string, fields: Partial<OCRResult>) => {
+    const currentCard = cards.find((c) => c.id === cardId);
+    const reviewVersion = currentCard?.ocrResult.reviewVersion ?? 0;
+
     // Optimistic local update
     setCards((prev) =>
       prev.map((c) =>
         c.id === cardId
-          ? { ...c, ocrResult: { ...c.ocrResult, ...fields, updatedAt: new Date().toISOString() } }
+          ? {
+              ...c,
+              ocrResult: {
+                ...c.ocrResult,
+                ...fields,
+                reviewVersion: c.ocrResult.reviewVersion + 1,
+                updatedAt: new Date().toISOString(),
+              },
+            }
           : c,
       ),
     );
 
     // Send to backend
     const status = fields.reviewStatus ?? 'approved';
-    api.submitReview(cardId, fields, status).catch(console.error);
-  }, []);
+    api.submitReview(cardId, fields, status, reviewVersion).catch(async (error) => {
+      console.error(error);
+      await refreshCards();
+    });
+  }, [cards, refreshCards]);
 
   const updateCardStatus = useCallback((cardId: string, status: ReviewStatus) => {
+    const currentCard = cards.find((c) => c.id === cardId);
+    const reviewVersion = currentCard?.ocrResult.reviewVersion ?? 0;
+
     // Optimistic local update
     setCards((prev) =>
       prev.map((c) =>
@@ -247,6 +264,7 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
               ocrResult: {
                 ...c.ocrResult,
                 reviewStatus: status,
+                reviewVersion: c.ocrResult.reviewVersion + 1,
                 updatedAt: new Date().toISOString(),
                 reviewedBy: 'admin',
               },
@@ -256,8 +274,11 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
     );
 
     // Send to backend
-    api.submitReview(cardId, {}, status).catch(console.error);
-  }, []);
+    api.submitReview(cardId, {}, status, reviewVersion).catch(async (error) => {
+      console.error(error);
+      await refreshCards();
+    });
+  }, [cards, refreshCards]);
 
   const deleteVideo = useCallback(async (videoId: string) => {
     await api.deleteVideo(videoId);

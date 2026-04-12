@@ -127,6 +127,7 @@ class OCRResult(Base):
     processed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    review_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     reviewed_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

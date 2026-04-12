@@ -339,6 +339,7 @@ class Card(Base):
 ### 3.4 P2 — No optimistic locking on review submissions
 
 **File:** `src/southview/review/service.py:161-224`
+**Status:** Closed on 2026-04-12. Real concern because review corrections are one of the few places where multiple internal operators may touch the same record. `OCRResult` rows now carry a monotonically increasing `review_version`, review submissions must include the last-seen version, and the backend performs an atomic compare-and-set update that returns `409 Conflict` when another reviewer has already saved newer changes.
 
 Two reviewers can submit edits for the same card simultaneously. The last write wins with no conflict detection.
 

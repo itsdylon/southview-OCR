@@ -82,10 +82,15 @@ def test_init_db_adds_missing_ocr_structured_columns_without_data_loss(tmp_path)
         }
         for field in CANONICAL_FIELDS:
             assert field in columns
+        assert "review_version" in columns
 
         row = verify.execute(
-            "SELECT deceased_name, date_of_death, grave_type, undertaker FROM ocr_results WHERE id = 'r1'"
+            """
+            SELECT deceased_name, date_of_death, grave_type, undertaker, review_version
+            FROM ocr_results
+            WHERE id = 'r1'
+            """
         ).fetchone()
-        assert row == ("AARON, Benjamin L.", "2004-12-08", None, None)
+        assert row == ("AARON, Benjamin L.", "2004-12-08", None, None, 0)
     finally:
         verify.close()

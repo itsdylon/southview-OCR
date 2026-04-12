@@ -117,6 +117,7 @@ def _migrate_ocr_results_structured_columns(engine: Engine) -> None:
         "board_of_health_no": "VARCHAR",
         "svc_no": "VARCHAR",
         "rotation_degrees": "INTEGER",
+        "review_version": "INTEGER NOT NULL DEFAULT 0",
     }
 
     with engine.connect() as conn:
