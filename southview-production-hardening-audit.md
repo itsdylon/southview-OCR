@@ -125,6 +125,7 @@ if file.size and file.size > MAX_UPLOAD_BYTES:
 ### 1.11 P1 — Config file tampering via regex injection
 
 **File:** `src/southview/api/routes/settings.py:39-48`
+**Status:** Closed on 2026-04-12. The original “regex injection” framing was somewhat overstated because FastAPI/Pydantic already coerced the payload to numeric values, but the persistence mechanism was still brittle. The endpoint now validates thresholds as finite `0.0`–`1.0` numbers and persists them through YAML load/modify/write instead of regex substitution.
 
 User-supplied threshold values are interpolated into `re.sub()` replacement strings. Special regex characters or newlines could corrupt the config file.
 
