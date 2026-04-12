@@ -313,6 +313,7 @@ SQLite with WAL mode and `check_same_thread=False` supports concurrent reads but
 ### 3.2 P1 — Inline migrations without version tracking
 
 **File:** `src/southview/db/engine.py:47-136`
+**Status:** Closed on 2026-04-12 with no code change. Real architectural concern, but not the right hardening change for this deployment. The current app only carries two narrow startup migrations, and the table-rebuild path in `_migrate_filepath_nullable()` is effectively a one-time upgrade that stops running once the database is already on the new shape. Introducing Alembic midstream would be a broad, invasive migration project with its own rollback and operational risk; for this single internal VPS, the better tradeoff is to keep the current lightweight migrations and revisit framework-backed versioning when schema churn or environment count increases.
 
 Migrations run on every startup via custom functions with no version tracking. The `_migrate_filepath_nullable` migration recreates the videos table, which drops all indexes, triggers, and foreign key references. There is no rollback mechanism.
 
