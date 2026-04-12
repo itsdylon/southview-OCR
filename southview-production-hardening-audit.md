@@ -210,6 +210,7 @@ The `async` upload endpoint performs synchronous file I/O (`shutil.copyfileobj`)
 ### 2.5 P1 — Daemon threads are not durable across restarts *
 
 **File:** `src/southview/api/routes/jobs.py:49-53`
+**Status:** Closed on 2026-04-12. Real concern because this deployment still runs in-process daemon threads, so a restart or crash can strand jobs and videos in misleading in-progress states. App startup now sweeps any `running` jobs into `failed` with a restart message and marks corresponding videos as failed, which gives operators a clean recovery path until a real task queue is introduced.
 
 Background processing uses `daemon=True` threads. Server restart or crash kills in-flight jobs with no recovery mechanism. Jobs remain in `running` status forever (zombie jobs).
 

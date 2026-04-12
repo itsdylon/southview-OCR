@@ -9,7 +9,7 @@ import pytest
 from southview.api.app import create_app
 from southview.auth import hash_password
 from southview.db.engine import get_session
-from southview.db.models import Video
+from southview.db.models import Job, Video
 
 
 class _DummyThread:
@@ -113,3 +113,46 @@ def test_start_job_rejects_when_different_job_type_is_active(client, tmp_path, m
 
     assert response.status_code == 409
     assert "active extraction job" in response.json()["detail"]
+
+
+def test_app_startup_marks_running_jobs_as_failed(tmp_config):
+    session = get_session()
+    try:
+        video = Video(
+            filename="stuck.mp4",
+            filepath="/tmp/stuck.mp4",
+            file_hash="hash-jobs-startup-recovery",
+            status="processing",
+        )
+        session.add(video)
+        session.flush()
+
+        job = Job(
+            video_id=video.id,
+            job_type="full_pipeline",
+            status="running",
+            progress=25,
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+        video_id = video.id
+    finally:
+        session.close()
+
+    with patch("southview.api.app.get_config", return_value=tmp_config):
+        app = create_app()
+        with TestClient(app):
+            pass
+
+    verify_session = get_session()
+    try:
+        recovered_job = verify_session.query(Job).get(job_id)
+        recovered_video = verify_session.query(Video).get(video_id)
+        assert recovered_job is not None
+        assert recovered_job.status == "failed"
+        assert "Server restarted" in (recovered_job.error_message or "")
+        assert recovered_video is not None
+        assert recovered_video.status == "failed"
+    finally:
+        verify_session.close()

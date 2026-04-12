@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from southview.auth import get_authenticated_user
 from southview.config import get_config
 from southview.db.engine import init_db
+from southview.jobs.manager import fail_running_jobs_on_startup
 
 # Resolve frontend dist directory (relative to project root)
 _FRONTEND_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def startup():
         init_db(config["database"]["path"])
+        fail_running_jobs_on_startup()
 
     # Mount static frames directory BEFORE any catch-all route
     frames_dir = Path(config["storage"]["frames_dir"])

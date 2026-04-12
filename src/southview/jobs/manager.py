@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import threading
 
 from southview.db.engine import get_session
-from southview.db.models import Job
+from southview.db.models import Job, Video
 
 _ACTIVE_JOB_STATUSES = ("queued", "running")
 _JOB_CREATION_LOCKS: dict[str, threading.Lock] = {}
@@ -101,6 +101,35 @@ def mark_failed(job_id: str, error_message: str) -> None:
         job.error_message = error_message
         job.completed_at = datetime.now(timezone.utc)
         session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def fail_running_jobs_on_startup(
+    reason: str = "Server restarted before the background job could finish.",
+) -> int:
+    """Mark in-flight jobs as failed after process startup."""
+    session = get_session()
+    try:
+        jobs = session.query(Job).filter_by(status="running").all()
+        if not jobs:
+            return 0
+
+        completed_at = datetime.now(timezone.utc)
+        for job in jobs:
+            job.status = "failed"
+            job.error_message = reason
+            job.completed_at = completed_at
+
+            video = session.query(Video).get(job.video_id)
+            if video and video.status == "processing":
+                video.status = "failed"
+
+        session.commit()
+        return len(jobs)
     except Exception:
         session.rollback()
         raise
