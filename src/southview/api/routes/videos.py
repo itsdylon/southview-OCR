@@ -134,7 +134,7 @@ def _release_upload_slot(client_key: str) -> None:
 # ---------------------------------------------------------------------------
 
 @router.post("/videos/upload", response_model=VideoUploadResponse)
-async def upload_video_endpoint(request: Request, file: UploadFile = File(...)):
+def upload_video_endpoint(request: Request, file: UploadFile = File(...)):
     """Upload a video file for processing."""
     suffix = Path(file.filename or "video.mp4").suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
@@ -188,7 +188,7 @@ async def upload_video_endpoint(request: Request, file: UploadFile = File(...)):
     finally:
         if upload_slot_reserved:
             _release_upload_slot(client_key)
-        await file.close()
+        file.file.close()
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 

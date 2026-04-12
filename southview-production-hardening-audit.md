@@ -201,6 +201,7 @@ External HTTP calls to the Gemini API have no retry mechanism. A single transien
 ### 2.4 P1 — Upload handler blocks the async event loop *
 
 **File:** `src/southview/api/routes/videos.py:79,94`, `src/southview/ingest/video_upload.py:76`
+**Status:** Closed on 2026-04-12. Real concern because large uploads are expected in normal use, and the previous `async` route performed synchronous disk I/O on the event loop thread. The upload endpoint is now synchronous so FastAPI runs it in the threadpool, which is a better fit for this blocking work on the current single-node deployment.
 
 The `async` upload endpoint performs synchronous file I/O (`shutil.copyfileobj`), hashing, and metadata extraction on the event loop thread. Large uploads starve all other request handling.
 
