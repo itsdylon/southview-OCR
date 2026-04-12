@@ -348,6 +348,7 @@ Two reviewers can submit edits for the same card simultaneously. The last write 
 ### 3.5 P2 — N+1 query in card listing
 
 **File:** `src/southview/review/service.py:142-149`
+**Status:** Closed on 2026-04-12 with no code change. After review, this is not a live concern in the current implementation: the review API reads `Card.video_id` directly and never dereferences `card.video`, so the extra lazy-load query path described here is not exercised. If future review responses start reading fields from the related `Video` object, this should be revisited and `joinedload(Card.video)` added at that time.
 
 Card queries eagerly load `OCRResult` but not the `Video` relationship. If the API later accesses `card.video`, it triggers a lazy-load query per card.
 
