@@ -219,6 +219,7 @@ Background processing uses `daemon=True` threads. Server restart or crash kills 
 ### 2.6 P1 — OCR batch aborts entirely on provider error
 
 **File:** `src/southview/ocr/batch.py:243-267`
+**Status:** Closed on 2026-04-12. Real concern because transient provider outages should degrade throughput, not wipe out the entire batch. Provider errors are now handled per card: the batch keeps going, failed cards are flagged instead of aborting the run, and Gemini provider failures can fall back to Tesseract via the configured fallback engine.
 
 When `OCRProviderError` is raised (e.g., API key invalid, quota exceeded), the entire batch is aborted. There is no fallback to Tesseract or partial-success handling.
 

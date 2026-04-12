@@ -41,6 +41,36 @@ _CORE_CONFIDENCE_WEIGHTS: Dict[str, float] = {
 }
 
 
+def _resolved_engine_name(engine_name: str | None) -> str:
+    if engine_name is None:
+        return get_ocr_engine_name()
+    return get_ocr_engine_name(engine_name)
+
+
+def _resolved_rotation_sweep(engine_name: str | None) -> bool:
+    if engine_name is None:
+        return uses_rotation_sweep()
+    return uses_rotation_sweep(engine_name)
+
+
+def _resolved_engine_version(engine_name: str | None) -> str:
+    if engine_name is None:
+        return get_ocr_engine_version()
+    return get_ocr_engine_version(engine_name)
+
+
+def _run_ocr_with_engine(preprocessed: np.ndarray, engine_name: str | None) -> Dict[str, Any]:
+    if engine_name is None:
+        return run_ocr(preprocessed)
+    return run_ocr(preprocessed, engine_name=engine_name)
+
+
+def _rotation_candidates_for_engine(engine_name: str | None) -> List[Tuple[int, Any]]:
+    if engine_name is None:
+        return _rotation_candidates()
+    return _rotation_candidates(engine_name)
+
+
 def _bbox_iou(a: List[int], b: List[int]) -> float:
     ax1, ay1, ax2, ay2 = a
     bx1, by1, bx2, by2 = b
@@ -331,8 +361,8 @@ def _heuristic_field_confidence(key: str, value: Any, base_confidence: float) ->
     return max(0.0, min(1.0, capped))
 
 
-def _rotation_candidates() -> List[Tuple[int, Any]]:
-    if get_ocr_engine_name() != "gemini":
+def _rotation_candidates(engine_name: str | None = None) -> List[Tuple[int, Any]]:
+    if _resolved_engine_name(engine_name) != "gemini":
         return _ORIENTATIONS
 
     rotation_mode = (
@@ -349,9 +379,10 @@ def _ocr_pipeline(
     img: np.ndarray,
     *,
     use_structured_fallback: bool = True,
+    engine_name: str | None = None,
 ) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]], str, Dict[str, Any]]:
     pre = preprocess_array(img)
-    ocr = run_ocr(pre)
+    ocr = _run_ocr_with_engine(pre, engine_name)
     words = ocr.get("words", []) or []
     raw_text = ocr.get("raw_text", "") or ""
     parsed = ocr.get("fields") or parse_fields_min(words, raw_text=raw_text)
@@ -359,7 +390,7 @@ def _ocr_pipeline(
 
     has_embedded_fields = bool(ocr.get("fields"))
 
-    if use_structured_fallback and (not has_embedded_fields) and get_ocr_engine_name() == "gemini" and raw_text:
+    if use_structured_fallback and (not has_embedded_fields) and _resolved_engine_name(engine_name) == "gemini" and raw_text:
         try:
             fallback_fields = parse_structured_fields_with_gemini(raw_text)
         except Exception:
@@ -383,6 +414,7 @@ def _build_result(
     *,
     field_conf_override: Optional[Dict[str, Any]] = None,
     card_conf_override: Optional[float] = None,
+    engine_name: str | None = None,
 ) -> Dict[str, Any]:
     fields = {k: parsed[k]["value"] for k in parsed}
     field_support = {k: parsed[k]["support"] for k in parsed}
@@ -417,18 +449,18 @@ def _build_result(
         "raw_text": raw_text,
         "orientation": orientation,
         "meta": {
-            "ocr_engine_version": get_ocr_engine_version(),
+            "ocr_engine_version": _resolved_engine_version(engine_name),
         },
     }
 
 
-def process_card_min(image_path: str) -> Dict[str, Any]:
+def process_card_min(image_path: str, *, engine_name: str | None = None) -> Dict[str, Any]:
     img = cv2.imread(image_path)
     if img is None:
         raise ValueError(f"Could not read image: {image_path}")
 
-    if not uses_rotation_sweep():
-        parsed, words, raw_text, meta = _ocr_pipeline(img)
+    if not _resolved_rotation_sweep(engine_name):
+        parsed, words, raw_text, meta = _ocr_pipeline(img, engine_name=engine_name)
         return _build_result(
             parsed,
             words,
@@ -436,14 +468,19 @@ def process_card_min(image_path: str) -> Dict[str, Any]:
             orientation=0,
             field_conf_override=meta.get("field_confidence"),
             card_conf_override=meta.get("card_confidence"),
+            engine_name=engine_name,
         )
 
     best_conf = -1.0
     best_result: Tuple[Dict[str, Dict[str, Any]], List, str, int, Dict[str, Any]] | None = None
 
-    for degree, rotate_flag in _rotation_candidates():
+    for degree, rotate_flag in _rotation_candidates_for_engine(engine_name):
         rotated = img if rotate_flag is None else cv2.rotate(img, rotate_flag)
-        parsed, words, raw_text, meta = _ocr_pipeline(rotated, use_structured_fallback=False)
+        parsed, words, raw_text, meta = _ocr_pipeline(
+            rotated,
+            use_structured_fallback=False,
+            engine_name=engine_name,
+        )
         conf = _orientation_score(parsed, words, raw_text, meta)
 
         if conf > best_conf:
@@ -452,7 +489,7 @@ def process_card_min(image_path: str) -> Dict[str, Any]:
 
     parsed, words, raw_text, degree, meta = best_result  # type: ignore[misc]
 
-    if (not bool(meta.get("has_embedded_fields"))) and get_ocr_engine_name() == "gemini" and raw_text:
+    if (not bool(meta.get("has_embedded_fields"))) and _resolved_engine_name(engine_name) == "gemini" and raw_text:
         try:
             fallback_fields = parse_structured_fields_with_gemini(raw_text)
         except Exception:
@@ -475,4 +512,5 @@ def process_card_min(image_path: str) -> Dict[str, Any]:
         orientation=degree,
         field_conf_override=meta.get("field_confidence"),
         card_conf_override=meta.get("card_confidence"),
+        engine_name=engine_name,
     )

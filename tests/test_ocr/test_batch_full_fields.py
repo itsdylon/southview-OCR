@@ -10,7 +10,7 @@ from southview.ocr.errors import OCRProviderError
 from southview.ocr.batch import run_ocr_for_video
 
 
-def _insert_video_and_card(file_hash: str) -> tuple[str, str]:
+def _insert_video_and_cards(file_hash: str, count: int = 1) -> tuple[str, list[str]]:
     session = get_session()
     try:
         video = Video(
@@ -22,22 +22,27 @@ def _insert_video_and_card(file_hash: str) -> tuple[str, str]:
         session.add(video)
         session.flush()
 
-        card = Card(
-            video_id=video.id,
-            job_id=None,
-            frame_number=1,
-            image_path="/tmp/card_0001.png",
-            sequence_index=1,
-        )
-        session.add(card)
+        card_ids: list[str] = []
+        for idx in range(1, count + 1):
+            card = Card(
+                video_id=video.id,
+                job_id=None,
+                frame_number=idx,
+                image_path=f"/tmp/card_{idx:04d}.png",
+                sequence_index=idx,
+            )
+            session.add(card)
+            session.flush()
+            card_ids.append(card.id)
         session.commit()
-        return video.id, card.id
+        return video.id, card_ids
     finally:
         session.close()
 
 
 def test_run_ocr_for_video_persists_all_structured_fields_and_raw_snapshot(tmp_db, monkeypatch):
-    video_id, card_id = _insert_video_and_card("hash-batch-fields-1")
+    video_id, card_ids = _insert_video_and_cards("hash-batch-fields-1")
+    card_id = card_ids[0]
 
     monkeypatch.setattr(
         "southview.ocr.batch.get_config",
@@ -109,7 +114,8 @@ def test_run_ocr_for_video_persists_all_structured_fields_and_raw_snapshot(tmp_d
 
 
 def test_run_ocr_for_video_maps_legacy_field_aliases_and_preserves_unparseable_dates(tmp_db, monkeypatch):
-    video_id, card_id = _insert_video_and_card("hash-batch-fields-2")
+    video_id, card_ids = _insert_video_and_cards("hash-batch-fields-2")
+    card_id = card_ids[0]
 
     monkeypatch.setattr(
         "southview.ocr.batch.get_config",
@@ -151,33 +157,96 @@ def test_run_ocr_for_video_maps_legacy_field_aliases_and_preserves_unparseable_d
         session.close()
 
 
-def test_run_ocr_for_video_provider_error_aborts_without_flagging(tmp_db, monkeypatch):
-    video_id, card_id = _insert_video_and_card("hash-batch-provider-err")
+def test_run_ocr_for_video_provider_error_falls_back_to_tesseract(tmp_db, monkeypatch):
+    video_id, card_ids = _insert_video_and_cards("hash-batch-provider-fallback")
+    card_id = card_ids[0]
 
     monkeypatch.setattr(
         "southview.ocr.batch.get_config",
-        lambda: {"ocr": {"confidence": {"review_threshold": 0.70, "auto_approve": 0.85}}},
-    )
-    monkeypatch.setattr(
-        "southview.ocr.batch.process_card_min",
-        lambda _image_path: (_ for _ in ()).throw(
-            OCRProviderError("Google AI OCR request failed: HTTP 429 RESOURCE_EXHAUSTED")
-        ),
+        lambda: {
+            "ocr": {
+                "engine": "gemini",
+                "provider_fallback_engine": "tesseract",
+                "confidence": {"review_threshold": 0.70, "auto_approve": 0.85},
+            }
+        },
     )
 
-    with pytest.raises(RuntimeError, match="OCR provider failure"):
-        run_ocr_for_video(video_id)
+    def fake_process_card_min(_image_path, *, engine_name=None):
+        if engine_name == "tesseract":
+            return {
+                "raw_text": "fallback text",
+                "card_confidence": 0.76,
+                "meta": {"ocr_engine_version": "tesseract"},
+                "fields": {"deceased_name": "Fallback Person"},
+            }
+        raise OCRProviderError("Google AI OCR request failed: HTTP 429 RESOURCE_EXHAUSTED")
+
+    monkeypatch.setattr("southview.ocr.batch.process_card_min", fake_process_card_min)
+
+    result = run_ocr_for_video(video_id)
+    assert result["processed"] == 1
+    assert result["failed"] == 0
 
     session = get_session()
     try:
-        ocr = session.query(OCRResult).filter_by(card_id=card_id).one_or_none()
-        assert ocr is None
+        ocr = session.query(OCRResult).filter_by(card_id=card_id).one()
+        assert ocr.deceased_name == "Fallback Person"
+        assert ocr.ocr_engine_version == "tesseract"
+        assert ocr.error_message is None
+    finally:
+        session.close()
+
+
+def test_run_ocr_for_video_provider_error_marks_one_card_and_continues(tmp_db, monkeypatch):
+    video_id, card_ids = _insert_video_and_cards("hash-batch-provider-continue", count=2)
+
+    monkeypatch.setattr(
+        "southview.ocr.batch.get_config",
+        lambda: {
+            "ocr": {
+                "engine": "gemini",
+                "provider_fallback_engine": "none",
+                "confidence": {"review_threshold": 0.70, "auto_approve": 0.85},
+            }
+        },
+    )
+
+    calls = {"count": 0}
+
+    def fake_process_card_min(_image_path, *, engine_name=None):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise OCRProviderError("Google AI OCR request failed: HTTP 429 RESOURCE_EXHAUSTED")
+        return {
+            "raw_text": "second card text",
+            "card_confidence": 0.9,
+            "meta": {"ocr_engine_version": "gemini:gemini-2.5-flash"},
+            "fields": {"deceased_name": "Second Card"},
+        }
+
+    monkeypatch.setattr("southview.ocr.batch.process_card_min", fake_process_card_min)
+
+    result = run_ocr_for_video(video_id)
+    assert result["processed"] == 1
+    assert result["failed"] == 1
+    assert "RESOURCE_EXHAUSTED" in (result["first_error"] or "")
+
+    session = get_session()
+    try:
+        first = session.query(OCRResult).filter_by(card_id=card_ids[0]).one()
+        second = session.query(OCRResult).filter_by(card_id=card_ids[1]).one()
+        assert first.review_status == "flagged"
+        assert "RESOURCE_EXHAUSTED" in (first.error_message or "")
+        assert second.deceased_name == "Second Card"
+        assert second.review_status == "approved"
     finally:
         session.close()
 
 
 def test_run_ocr_for_video_non_provider_error_creates_flagged_result(tmp_db, monkeypatch):
-    video_id, card_id = _insert_video_and_card("hash-batch-non-provider-err")
+    video_id, card_ids = _insert_video_and_cards("hash-batch-non-provider-err")
+    card_id = card_ids[0]
 
     monkeypatch.setattr(
         "southview.ocr.batch.get_config",

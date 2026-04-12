@@ -9,13 +9,15 @@ from southview.ocr.gemini_wrapper import gemini_engine_version, run_gemini
 from southview.ocr.tesseract_wrapper import run_tesseract
 
 
-def get_ocr_engine_name() -> str:
+def get_ocr_engine_name(engine_name: str | None = None) -> str:
+    if engine_name is not None:
+        return str(engine_name).strip().lower()
     return str(get_config().get("ocr", {}).get("engine", "gemini")).strip().lower()
 
 
-def uses_rotation_sweep() -> bool:
+def uses_rotation_sweep(engine_name: str | None = None) -> bool:
     cfg = get_config().get("ocr", {})
-    engine = get_ocr_engine_name()
+    engine = get_ocr_engine_name(engine_name)
     if engine == "tesseract":
         return True
     if engine == "gemini":
@@ -23,15 +25,15 @@ def uses_rotation_sweep() -> bool:
     return False
 
 
-def get_ocr_engine_version() -> str:
-    engine = get_ocr_engine_name()
+def get_ocr_engine_version(engine_name: str | None = None) -> str:
+    engine = get_ocr_engine_name(engine_name)
     if engine == "gemini":
         return gemini_engine_version()
     return "tesseract"
 
 
-def run_ocr(image: np.ndarray) -> dict[str, Any]:
-    engine = get_ocr_engine_name()
+def run_ocr(image: np.ndarray, *, engine_name: str | None = None) -> dict[str, Any]:
+    engine = get_ocr_engine_name(engine_name)
     if engine == "tesseract":
         return run_tesseract(image)
     if engine == "gemini":

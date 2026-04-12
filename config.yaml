@@ -22,6 +22,7 @@ frame_extraction:
 
 ocr:
   engine: gemini
+  provider_fallback_engine: tesseract
   gemini:
     model: gemini-2.5-flash
     api_key_env: GEMINI_API_KEY
