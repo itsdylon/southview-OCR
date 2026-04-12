@@ -282,6 +282,7 @@ Previous extraction decisions are deleted at the start of extraction. If extract
 ### 2.13 P2 — No timeout on video metadata extraction
 
 **File:** `src/southview/ingest/metadata.py:17-45`
+**Status:** Closed on 2026-04-12 with no code change. After review, this is not a strong production concern for the current deployment: uploads are written to local disk on a single Hetzner VPS, so the audit’s network-mounted-file failure mode is out of scope, and metadata extraction runs only once during ingest. A subprocess timeout wrapper would add noticeable complexity and per-upload overhead for a low-probability edge case; if uploads ever move to remote storage or operators start seeing stuck ingest workers, this should be reopened.
 
 `cv2.VideoCapture.get()` can hang indefinitely on corrupted or network-mounted files.
 
