@@ -27,6 +27,9 @@ ocr:
     api_key_env: GEMINI_API_KEY
     endpoint: https://generativelanguage.googleapis.com/v1beta
     timeout_seconds: 30
+    max_retries: 3
+    retry_backoff_seconds: 1.0
+    retry_jitter_seconds: 0.25
     try_rotations: false
     rotation_mode: all   # all | sideways | none
     structured_fallback: true

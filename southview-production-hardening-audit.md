@@ -192,6 +192,7 @@ Nothing prevents two concurrent `POST /api/jobs/{video_id}/start` requests from 
 ### 2.3 P0 — No retry logic for Gemini API calls
 
 **File:** `src/southview/ocr/gemini_wrapper.py:184-213`
+**Status:** Closed on 2026-04-12. Real concern because the VPS deployment depends on a remote API where transient 429s and network hiccups are normal operational conditions, not exceptional edge cases. Gemini requests now retry with exponential backoff and optional jitter on HTTP 429/5xx and network errors, while still failing fast on invalid API keys.
 
 External HTTP calls to the Gemini API have no retry mechanism. A single transient network failure or rate-limit response kills the entire OCR batch.
 

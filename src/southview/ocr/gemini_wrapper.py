@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import os
+import random
 import re
+import time
 from typing import Any
 from urllib import error, request
 
@@ -114,6 +116,18 @@ def _timeout_seconds() -> float:
     return float(_gemini_config().get("timeout_seconds", 30))
 
 
+def _max_retries() -> int:
+    return max(0, int(_gemini_config().get("max_retries", 3)))
+
+
+def _retry_backoff_seconds() -> float:
+    return max(0.0, float(_gemini_config().get("retry_backoff_seconds", 1.0)))
+
+
+def _retry_jitter_seconds() -> float:
+    return max(0.0, float(_gemini_config().get("retry_jitter_seconds", 0.25)))
+
+
 def _extract_text_part(payload: dict[str, Any]) -> str:
     candidates = payload.get("candidates") or []
     if not candidates:
@@ -181,36 +195,55 @@ def _normalize_result(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _retry_delay_seconds(attempt: int) -> float:
+    base_delay = _retry_backoff_seconds() * (2 ** max(attempt - 1, 0))
+    jitter = _retry_jitter_seconds()
+    if jitter > 0:
+        base_delay += random.uniform(0.0, jitter)
+    return base_delay
+
+
+def _is_retryable_http_status(status_code: int) -> bool:
+    return status_code == 429 or 500 <= status_code < 600
+
+
 def _post_json(payload: dict[str, Any]) -> dict[str, Any]:
     api_key = _api_key()
     env_name = str(_gemini_config().get("api_key_env", "GEMINI_API_KEY")).strip() or "GEMINI_API_KEY"
-    req = request.Request(
-        _endpoint_url(),
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key,
-        },
-        method="POST",
-    )
+    for attempt in range(_max_retries() + 1):
+        req = request.Request(
+            _endpoint_url(),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key,
+            },
+            method="POST",
+        )
 
-    try:
-        with request.urlopen(req, timeout=_timeout_seconds()) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        if "API_KEY_INVALID" in detail or "API Key not found" in detail:
+        try:
+            with request.urlopen(req, timeout=_timeout_seconds()) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            if "API_KEY_INVALID" in detail or "API Key not found" in detail:
+                raise OCRProviderError(
+                    "Google AI OCR API key was rejected. "
+                    f"Checked env var: {env_name} (len={len(api_key)}). "
+                    "Verify the key belongs to the intended AI Studio project and "
+                    "that API/Application restrictions allow Generative Language API calls."
+                ) from exc
+            if attempt < _max_retries() and _is_retryable_http_status(exc.code):
+                time.sleep(_retry_delay_seconds(attempt + 1))
+                continue
             raise OCRProviderError(
-                "Google AI OCR API key was rejected. "
-                f"Checked env var: {env_name} (len={len(api_key)}). "
-                "Verify the key belongs to the intended AI Studio project and "
-                "that API/Application restrictions allow Generative Language API calls."
+                f"Google AI OCR request failed: HTTP {exc.code} {detail}"
             ) from exc
-        raise OCRProviderError(
-            f"Google AI OCR request failed: HTTP {exc.code} {detail}"
-        ) from exc
-    except error.URLError as exc:
-        raise OCRProviderError(f"Google AI OCR request failed: {exc.reason}") from exc
+        except error.URLError as exc:
+            if attempt < _max_retries():
+                time.sleep(_retry_delay_seconds(attempt + 1))
+                continue
+            raise OCRProviderError(f"Google AI OCR request failed: {exc.reason}") from exc
 
 
 def parse_structured_fields_with_gemini(raw_text: str) -> dict[str, Any]:
