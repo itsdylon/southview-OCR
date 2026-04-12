@@ -183,6 +183,7 @@ Nothing prevents two concurrent `POST /api/jobs/{video_id}/start` requests from 
 ### 2.2 P0 — Destructive cleanup with no backup before reprocessing
 
 **File:** `src/southview/jobs/cleanup.py:11-36`
+**Status:** Closed on 2026-04-12. Real concern for this deployment because reprocessing is an operator-driven action and the old implementation could wipe the only known-good results before the new run proved itself. Reprocessing now creates a pre-job database backup when prior results exist, and old frame files are stashed and automatically restored if the new pipeline fails before completion.
 
 `cleanup_previous_results()` permanently deletes all cards, OCR results, and frame images for a video. If the subsequent pipeline run fails mid-way, all previous work is irrecoverably lost.
 

@@ -1,9 +1,11 @@
 """Job execution orchestrator — runs the full pipeline."""
 
 import logging
+import shutil
 import time
 from pathlib import Path
 
+from southview.backup.backup_manager import create_backup
 from southview.config import get_config
 from southview.db.engine import get_session
 from southview.db.models import Card, Video
@@ -15,10 +17,53 @@ from southview.ocr.batch import run_ocr_for_video
 logger = logging.getLogger(__name__)
 
 
+def _frames_dir(video_id: str) -> Path:
+    storage = get_config().get("storage", {})
+    frames_root = storage.get("frames_dir", "data/frames")
+    return Path(frames_root) / video_id
+
+
+def _stashed_frames_dir(video_id: str, job_id: str) -> Path:
+    frames_dir = _frames_dir(video_id)
+    return frames_dir.parent / f".{video_id}.pre-reprocess-{job_id}"
+
+
+def _stash_existing_frames(video_id: str, job_id: str) -> Path | None:
+    frames_dir = _frames_dir(video_id)
+    if not frames_dir.exists():
+        return None
+    stashed_dir = _stashed_frames_dir(video_id, job_id)
+    if stashed_dir.exists():
+        shutil.rmtree(stashed_dir, ignore_errors=True)
+    frames_dir.replace(stashed_dir)
+    return stashed_dir
+
+
+def _restore_stashed_frames(video_id: str, stashed_dir: Path | None) -> None:
+    if stashed_dir is None or not stashed_dir.exists():
+        return
+    frames_dir = _frames_dir(video_id)
+    if frames_dir.exists():
+        shutil.rmtree(frames_dir, ignore_errors=True)
+    stashed_dir.replace(frames_dir)
+
+
+def _discard_stashed_frames(stashed_dir: Path | None) -> None:
+    if stashed_dir is not None and stashed_dir.exists():
+        shutil.rmtree(stashed_dir, ignore_errors=True)
+
+
+def _has_previous_results(session, video_id: str) -> bool:
+    if session.query(Card.id).filter_by(video_id=video_id).first() is not None:
+        return True
+    return _frames_dir(video_id).exists()
+
+
 def run_full_pipeline(job_id: str, video_id: str) -> None:
     """Execute the full processing pipeline: frame extraction → OCR."""
     session = get_session()
     pipeline_started = time.perf_counter()
+    stashed_frames_dir: Path | None = None
     try:
         video = session.query(Video).get(video_id)
         if video is None:
@@ -39,8 +84,15 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
                 "Re-upload the video before starting or retrying this job."
             )
 
-        # Idempotency: clean up any previous results
-        cleanup_previous_results(video_id)
+        had_previous_results = _has_previous_results(session, video_id)
+        if had_previous_results and bool(get_config().get("backup", {}).get("auto_backup_before_jobs", True)):
+            backup_path = create_backup()
+            logger.info("Created pre-reprocessing database backup: %s", backup_path)
+
+        stashed_frames_dir = _stash_existing_frames(video_id, job_id)
+
+        # Idempotency: clean up any previous DB results while preserving old frames until success/failure is known.
+        cleanup_previous_results(video_id, remove_frames=False)
 
         # Phase 1: Frame extraction (0–50%)
         logger.info("Pipeline start: job_id=%s video_id=%s", job_id, video_id)
@@ -54,6 +106,8 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
             len(frame_results),
             frame_elapsed,
         )
+        _discard_stashed_frames(stashed_frames_dir)
+        stashed_frames_dir = None
         update_progress(job_id, 50)
 
         # Create Card records in chunks for large runs.
@@ -153,6 +207,10 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
             video_id,
             pipeline_elapsed,
         )
+        try:
+            _restore_stashed_frames(video_id, stashed_frames_dir)
+        except Exception:
+            logger.exception("Failed to restore stashed frames after pipeline failure: video_id=%s", video_id)
         mark_failed(job_id, str(e))
         try:
             video = session.query(Video).get(video_id)

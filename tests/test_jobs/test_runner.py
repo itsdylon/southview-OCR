@@ -81,7 +81,7 @@ def test_run_full_pipeline_inserts_cards_in_batches(tmp_path, tmp_db):
         video = verify_session.query(Video).get(video_id)
         assert video is not None
         assert video.status == "completed"
-        assert video.filepath is None
+        assert video.filepath == str(source_video)
     finally:
         verify_session.close()
 
@@ -125,3 +125,142 @@ def test_run_full_pipeline_fails_fast_when_source_video_missing(tmp_db):
         assert video.status == "failed"
     finally:
         verify_session.close()
+
+
+def test_run_full_pipeline_creates_backup_before_reprocessing(tmp_path, tmp_db):
+    source_video = tmp_path / "source.mp4"
+    source_video.write_bytes(b"video-bytes")
+    frames_root = tmp_path / "frames"
+    frames_root.mkdir()
+
+    setup_session = get_session()
+    try:
+        video = Video(
+            filename="source.mp4",
+            filepath=str(source_video),
+            file_hash="hash-runner-backup-test",
+            status="uploaded",
+        )
+        setup_session.add(video)
+        setup_session.flush()
+
+        existing_card = Card(
+            video_id=video.id,
+            job_id=None,
+            frame_number=1,
+            image_path=str(frames_root / video.id / "card_0001.jpg"),
+            sequence_index=1,
+        )
+        setup_session.add(existing_card)
+
+        job = Job(
+            video_id=video.id,
+            job_type="full_pipeline",
+            status="queued",
+            progress=0,
+        )
+        setup_session.add(job)
+        setup_session.commit()
+        video_id = video.id
+        job_id = job.id
+    finally:
+        setup_session.close()
+
+    frame_results = [
+        {
+            "frame_number": 1,
+            "image_path": str(frames_root / video_id / "card_0001.jpg"),
+            "sequence_index": 1,
+        }
+    ]
+    config = {
+        "storage": {
+            "frames_dir": str(frames_root),
+            "delete_source_video_after_processing": False,
+        },
+        "frame_extraction": {"db_insert_batch_size": 500},
+        "backup": {"auto_backup_before_jobs": True},
+    }
+
+    with patch("southview.jobs.runner.get_config", return_value=config), \
+         patch("southview.jobs.runner.create_backup", return_value=str(tmp_path / "backup.db")) as create_backup_mock, \
+         patch("southview.jobs.runner.extract_frames", return_value=frame_results), \
+         patch("southview.jobs.runner.run_ocr_for_video", return_value={"processed": 1, "failed": 0}), \
+         patch("southview.jobs.runner.mark_running"), \
+         patch("southview.jobs.runner.mark_completed"), \
+         patch("southview.jobs.runner.update_progress"):
+        run_full_pipeline(job_id, video_id)
+
+    create_backup_mock.assert_called_once()
+
+
+def test_run_full_pipeline_restores_previous_frames_when_reprocessing_fails(tmp_path, tmp_db):
+    source_video = tmp_path / "source.mp4"
+    source_video.write_bytes(b"video-bytes")
+    frames_root = tmp_path / "frames"
+    original_frames_dir = frames_root / "video-placeholder"
+    frames_root.mkdir()
+
+    setup_session = get_session()
+    try:
+        video = Video(
+            filename="source.mp4",
+            filepath=str(source_video),
+            file_hash="hash-runner-restore-frames",
+            status="uploaded",
+        )
+        setup_session.add(video)
+        setup_session.flush()
+        original_frames_dir = frames_root / video.id
+        original_frames_dir.mkdir(parents=True, exist_ok=True)
+        old_frame = original_frames_dir / "old-card.jpg"
+        old_frame.write_text("old-frame", encoding="utf-8")
+
+        existing_card = Card(
+            video_id=video.id,
+            job_id=None,
+            frame_number=1,
+            image_path=str(old_frame),
+            sequence_index=1,
+        )
+        setup_session.add(existing_card)
+
+        job = Job(
+            video_id=video.id,
+            job_type="full_pipeline",
+            status="queued",
+            progress=0,
+        )
+        setup_session.add(job)
+        setup_session.commit()
+        video_id = video.id
+        job_id = job.id
+    finally:
+        setup_session.close()
+
+    config = {
+        "storage": {
+            "frames_dir": str(frames_root),
+            "delete_source_video_after_processing": False,
+        },
+        "frame_extraction": {"db_insert_batch_size": 500},
+        "backup": {"auto_backup_before_jobs": True},
+    }
+
+    def failing_extract(_video_path, _video_id):
+        new_frames_dir = frames_root / video_id
+        new_frames_dir.mkdir(parents=True, exist_ok=True)
+        (new_frames_dir / "new-card.jpg").write_text("new-frame", encoding="utf-8")
+        raise RuntimeError("frame extraction failed")
+
+    with patch("southview.jobs.runner.get_config", return_value=config), \
+         patch("southview.jobs.runner.create_backup", return_value=str(tmp_path / "backup.db")), \
+         patch("southview.jobs.runner.extract_frames", side_effect=failing_extract), \
+         patch("southview.jobs.runner.mark_running"), \
+         patch("southview.jobs.runner.mark_failed"):
+        with pytest.raises(RuntimeError, match="frame extraction failed"):
+            run_full_pipeline(job_id, video_id)
+
+    restored_dir = frames_root / video_id
+    assert (restored_dir / "old-card.jpg").exists()
+    assert not (restored_dir / "new-card.jpg").exists()

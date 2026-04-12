@@ -8,7 +8,7 @@ from southview.db.engine import get_session
 from southview.db.models import Card, OCRResult
 
 
-def cleanup_previous_results(video_id: str) -> None:
+def cleanup_previous_results(video_id: str, *, remove_frames: bool = True) -> None:
     """Delete all cards and OCR results for a video to allow clean reprocessing."""
     session = get_session()
     try:
@@ -24,10 +24,11 @@ def cleanup_previous_results(video_id: str) -> None:
         session.commit()
 
         # Remove frame images
-        config = get_config()
-        frames_dir = Path(config["storage"]["frames_dir"]) / video_id
-        if frames_dir.exists():
-            shutil.rmtree(frames_dir)
+        if remove_frames:
+            config = get_config()
+            frames_dir = Path(config["storage"]["frames_dir"]) / video_id
+            if frames_dir.exists():
+                shutil.rmtree(frames_dir)
 
     except Exception:
         session.rollback()
