@@ -141,6 +141,21 @@ class TestUploadEndpoint:
         assert resp.status_code == 429
         assert "Too many uploads in progress" in resp.json()["detail"]
 
+    def test_upload_returns_500_for_storage_errors(self, client, tiny_mp4, monkeypatch):
+        monkeypatch.setattr(
+            "southview.api.routes.videos.upload_video",
+            lambda _path: (_ for _ in ()).throw(OSError("disk full")),
+        )
+
+        with open(tiny_mp4, "rb") as f:
+            resp = client.post(
+                "/api/videos/upload",
+                files={"file": ("test.mp4", f, "video/mp4")},
+            )
+
+        assert resp.status_code == 500
+        assert resp.json()["detail"] == "Server could not store the uploaded file."
+
 
 class TestListEndpoint:
     def test_list_empty(self, client):

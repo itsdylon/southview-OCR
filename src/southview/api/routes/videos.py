@@ -183,8 +183,14 @@ def upload_video_endpoint(request: Request, file: UploadFile = File(...)):
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except OSError:
+        raise HTTPException(status_code=500, detail="Server could not store the uploaded file.")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Server failed to process the uploaded file.")
     finally:
         if upload_slot_reserved:
             _release_upload_slot(client_key)

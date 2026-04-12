@@ -235,6 +235,7 @@ After marking the job as failed, the exception is re-raised (`raise` on line 164
 ### 2.8 P2 — All upload exceptions become HTTP 400 *
 
 **File:** `src/southview/api/routes/videos.py:109-110`
+**Status:** Closed on 2026-04-12. Real concern because it hid infrastructure problems behind client-looking errors, which would have made monitoring and operator diagnosis much harder on the VPS. The upload route now preserves explicit HTTP errors, maps validation failures to `400`, missing files to `404`, and storage/unknown failures to `500`.
 
 The catch-all `except Exception as e: raise HTTPException(status_code=400, ...)` masks genuine server errors (disk full, DB down, permission denied) as client errors, making diagnosis and monitoring impossible.
 
