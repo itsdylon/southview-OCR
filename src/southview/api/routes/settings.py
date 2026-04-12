@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -34,15 +35,18 @@ def update_thresholds(payload: ThresholdsPayload):
     cfg["ocr"]["confidence"]["auto_approve"] = payload.auto_approve
     cfg["ocr"]["confidence"]["review_threshold"] = payload.review_threshold
 
-    # Persist to config.yaml using structured YAML updates instead of regex replacements.
+    # Persist to config.yaml under an exclusive file lock to avoid concurrent overwrites.
     config_path = Path(_DEFAULT_CONFIG_PATH)
-    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    persisted.setdefault("ocr", {}).setdefault("confidence", {})
-    persisted["ocr"]["confidence"]["auto_approve"] = payload.auto_approve
-    persisted["ocr"]["confidence"]["review_threshold"] = payload.review_threshold
-    config_path.write_text(
-        yaml.safe_dump(persisted, sort_keys=False),
-        encoding="utf-8",
-    )
+    with config_path.open("r+", encoding="utf-8") as config_file:
+        fcntl.flock(config_file.fileno(), fcntl.LOCK_EX)
+        persisted = yaml.safe_load(config_file.read()) or {}
+        persisted.setdefault("ocr", {}).setdefault("confidence", {})
+        persisted["ocr"]["confidence"]["auto_approve"] = payload.auto_approve
+        persisted["ocr"]["confidence"]["review_threshold"] = payload.review_threshold
+        config_file.seek(0)
+        config_file.write(yaml.safe_dump(persisted, sort_keys=False))
+        config_file.truncate()
+        config_file.flush()
+        fcntl.flock(config_file.fileno(), fcntl.LOCK_UN)
 
     return {"status": "ok"}

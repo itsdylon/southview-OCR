@@ -262,6 +262,7 @@ The file is first written to a temp directory, then copied to final storage. For
 ### 2.11 P2 — Settings read-modify-write race condition
 
 **File:** `src/southview/api/routes/settings.py:38-49`
+**Status:** Closed on 2026-04-12. Real but low-frequency concern for the current deployment because there is usually one operator, but concurrent threshold saves could still overwrite each other. The settings write path now takes an exclusive file lock around the YAML read-modify-write sequence.
 
 The settings endpoint reads the config file, modifies it with regex, and writes it back without any file locking. Concurrent requests can overwrite each other's changes.
 
