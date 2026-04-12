@@ -27,6 +27,21 @@ def _run_job_safely(job_id: str, video_id: str) -> None:
         return
 
 
+def _job_response(job: Job, video_name: str | None, *, replaces_job: str | None = None) -> dict[str, object]:
+    body: dict[str, object] = {
+        "id": job.id,
+        "video_id": job.video_id,
+        "video_name": video_name,
+        "status": job.status,
+        "job_type": job.job_type,
+        "progress": job.progress,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+    }
+    if replaces_job is not None:
+        body["replaces_job"] = replaces_job
+    return body
+
+
 @router.post("/jobs/{video_id}/start")
 def start_job(video_id: str):
     """Create and start a processing job for a video."""
@@ -44,7 +59,14 @@ def start_job(video_id: str):
     finally:
         session.close()
 
-    job = create_job(video_id, "full_pipeline")
+    job, created = create_job(video_id, "full_pipeline")
+    if not created:
+        if job.job_type != "full_pipeline":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Video already has an active {job.job_type} job.",
+            )
+        return _job_response(job, video_name)
 
     # Run in background thread (simple single-machine approach)
     thread = threading.Thread(
@@ -52,15 +74,7 @@ def start_job(video_id: str):
     )
     thread.start()
 
-    return {
-        "id": job.id,
-        "video_id": video_id,
-        "video_name": video_name,
-        "status": "queued",
-        "job_type": "full_pipeline",
-        "progress": 0,
-        "created_at": job.created_at.isoformat() if job.created_at else None,
-    }
+    return _job_response(job, video_name)
 
 
 @router.get("/jobs/{job_id}")
@@ -135,19 +149,18 @@ def retry_job(job_id: str):
     finally:
         session.close()
 
-    new_job = create_job(video_id, "full_pipeline")
+    new_job, created = create_job(video_id, "full_pipeline")
+    if not created:
+        if new_job.job_type != "full_pipeline":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Video already has an active {new_job.job_type} job.",
+            )
+        return _job_response(new_job, video_name, replaces_job=job_id)
+
     thread = threading.Thread(
         target=_run_job_safely, args=(new_job.id, video_id), daemon=True
     )
     thread.start()
 
-    return {
-        "id": new_job.id,
-        "video_id": video_id,
-        "video_name": video_name,
-        "status": "queued",
-        "job_type": "full_pipeline",
-        "progress": 0,
-        "replaces_job": job_id,
-        "created_at": new_job.created_at.isoformat() if new_job.created_at else None,
-    }
+    return _job_response(new_job, video_name, replaces_job=job_id)

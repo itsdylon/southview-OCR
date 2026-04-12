@@ -174,6 +174,7 @@ Only file extension is checked. A ZIP or executable renamed to `.mp4` passes val
 ### 2.1 P0 — Race condition: duplicate job starts for same video
 
 **Files:** `src/southview/api/routes/jobs.py:30-53`, `src/southview/jobs/runner.py:27-29`
+**Status:** Closed on 2026-04-12. Real concern even on the single-server Hetzner deployment because two quick requests from the UI could still race within the same process and start overlapping workers against the same video. Job creation is now serialized per video in-process, active jobs are deduplicated at the manager layer, and the routes return the existing active job instead of spawning another thread.
 
 Nothing prevents two concurrent `POST /api/jobs/{video_id}/start` requests from creating two jobs and spawning two threads processing the same video simultaneously. Both threads will call `cleanup_previous_results`, causing data corruption.
 

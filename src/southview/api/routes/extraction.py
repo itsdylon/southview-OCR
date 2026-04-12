@@ -12,6 +12,15 @@ from southview.jobs.runner import run_extraction_only
 router = APIRouter(tags=["extraction"])
 
 
+def _job_response(job: Job) -> dict[str, object]:
+    return {
+        "id": job.id,
+        "video_id": job.video_id,
+        "status": job.status,
+        "job_type": job.job_type,
+    }
+
+
 @router.post("/extraction/{video_id}/start")
 def start_extraction(video_id: str):
     """Start frame extraction only (no OCR) for a video."""
@@ -23,19 +32,19 @@ def start_extraction(video_id: str):
     finally:
         session.close()
 
-    job = create_job(video_id, "extraction")
+    job, created = create_job(video_id, "extraction")
+    if not created:
+        if job.job_type != "extraction":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Video already has an active {job.job_type} job.",
+            )
+        return _job_response(job)
 
-    thread = threading.Thread(
-        target=run_extraction_only, args=(job.id, video_id), daemon=True
-    )
+    thread = threading.Thread(target=run_extraction_only, args=(job.id, video_id), daemon=True)
     thread.start()
 
-    return {
-        "id": job.id,
-        "video_id": video_id,
-        "status": "queued",
-        "job_type": "extraction",
-    }
+    return _job_response(job)
 
 
 @router.get("/extraction/{job_id}/status")

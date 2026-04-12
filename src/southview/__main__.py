@@ -110,8 +110,11 @@ def main():
 
         init_db()
         video_id = sys.argv[2]
-        job = create_job(video_id, "full_pipeline")
-        print(f"Job created: {job.id}")
+        job, created = create_job(video_id, "full_pipeline")
+        if created:
+            print(f"Job created: {job.id}")
+        else:
+            print(f"Using existing active job: {job.id}")
         run_full_pipeline(job.id, video_id)
         print("Processing complete.")
 
