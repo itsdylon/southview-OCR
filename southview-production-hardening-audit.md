@@ -304,6 +304,7 @@ If a card's image file is missing during export, `FileNotFoundError` is silently
 ### 3.1 P1 — SQLite concurrency limitations under load
 
 **File:** `src/southview/db/engine.py:26-31`
+**Status:** Closed on 2026-04-12. Real concern even on a single internal VPS because uploads, background jobs, and review writes can still overlap and SQLite otherwise fails fast with `database is locked`. The engine now sets `PRAGMA busy_timeout=5000` on every connection so transient writer contention retries for up to five seconds before surfacing an error.
 
 SQLite with WAL mode and `check_same_thread=False` supports concurrent reads but only one writer at a time. Under moderate concurrent write load (multiple uploads + job processing + review submissions), `SQLITE_BUSY` errors will occur.
 

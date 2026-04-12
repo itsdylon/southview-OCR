@@ -35,6 +35,7 @@ def init_db(db_path: str | Path) -> Engine:
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL;")
         cur.execute("PRAGMA foreign_keys=ON;")
+        cur.execute("PRAGMA busy_timeout=5000;")
         cur.close()
 
     _ENGINE = engine
