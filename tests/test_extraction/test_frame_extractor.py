@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
+import pytest
 
 from southview.extraction import frame_extractor
 from southview.extraction.phash import compute_phash, hamming_distance
@@ -148,3 +149,38 @@ class TestFrameExtractor:
         assert manifest["counts"]["accepted"] == 2
         assert manifest["counts"]["rejected_dedup"] == 1
         assert manifest["counts"]["rejected_blur"] == 0
+
+    def test_failed_extraction_preserves_previous_results(self, tiny_mp4, tmp_path):
+        output_dir = tmp_path / "frames"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        previous_decisions = '{"decision":"accepted","image_path":"old-card.jpg"}\n'
+        previous_manifest = '{"counts":{"accepted":1}}'
+        old_frame = output_dir / "card_0001.jpg"
+        (output_dir / "extraction_decisions.jsonl").write_text(previous_decisions, encoding="utf-8")
+        (output_dir / "extraction_manifest.json").write_text(previous_manifest, encoding="utf-8")
+        old_frame.write_bytes(b"old-frame")
+
+        config = {
+            "storage": {"frames_dir": str(tmp_path / "frames_root")},
+            "frame_extraction": {
+                "min_stable_frames": 1,
+                "blur_threshold": 0.0,
+                "dedup_enabled": True,
+                "dedup_hamming_threshold": 8,
+            },
+        }
+
+        with patch.object(frame_extractor, "get_config", return_value=config), \
+             patch.object(frame_extractor, "detect_transitions", return_value=[3]), \
+             patch.object(frame_extractor, "_find_best_frame", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError, match="boom"):
+                frame_extractor.extract_frames(
+                    video_path=tiny_mp4,
+                    video_id="vid-preserve",
+                    output_dir=output_dir,
+                )
+
+        assert (output_dir / "extraction_decisions.jsonl").read_text(encoding="utf-8") == previous_decisions
+        assert (output_dir / "extraction_manifest.json").read_text(encoding="utf-8") == previous_manifest
+        assert old_frame.read_bytes() == b"old-frame"
+        assert not list(tmp_path.glob(".frames.extracting-*"))

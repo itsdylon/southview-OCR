@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,32 @@ from southview.extraction.scene_detect import detect_transitions
 from southview.extraction.sharpness import compute_sharpness
 
 logger = logging.getLogger(__name__)
+
+
+def _staged_output_dir(output_dir: Path) -> Path:
+    staged_dir = output_dir.parent / f".{output_dir.name}.extracting-{uuid.uuid4().hex}"
+    if staged_dir.exists():
+        shutil.rmtree(staged_dir, ignore_errors=True)
+    return staged_dir
+
+
+def _swap_output_dir(staged_dir: Path, output_dir: Path) -> None:
+    backup_dir: Path | None = None
+    if output_dir.exists():
+        backup_dir = output_dir.parent / f".{output_dir.name}.previous-{uuid.uuid4().hex}"
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
+        output_dir.replace(backup_dir)
+
+    try:
+        staged_dir.replace(output_dir)
+    except Exception:
+        if backup_dir is not None and backup_dir.exists() and not output_dir.exists():
+            backup_dir.replace(output_dir)
+        raise
+    else:
+        if backup_dir is not None and backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def extract_frames(
@@ -35,16 +63,13 @@ def extract_frames(
     if output_dir is None:
         output_dir = Path(config["storage"]["frames_dir"]) / video_id
     output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    rejected_blur_dir = output_dir / "rejected_blur"
+    staged_output_dir = _staged_output_dir(output_dir)
+    staged_output_dir.mkdir(parents=True, exist_ok=True)
+    rejected_blur_dir = staged_output_dir / "rejected_blur"
     rejected_blur_dir.mkdir(parents=True, exist_ok=True)
 
-    decisions_path = output_dir / "extraction_decisions.jsonl"
-    manifest_path = output_dir / "extraction_manifest.json"
-    if decisions_path.exists():
-        decisions_path.unlink()
-    if manifest_path.exists():
-        manifest_path.unlink()
+    decisions_path = staged_output_dir / "extraction_decisions.jsonl"
+    manifest_path = staged_output_dir / "extraction_manifest.json"
 
     transitions = detect_transitions(video_path)
 
@@ -101,8 +126,9 @@ def extract_frames(
                 blur_filename = (
                     f"segment_{segment_index:04d}_frame_{best_frame_num:06d}.jpg"
                 )
-                blur_path = rejected_blur_dir / blur_filename
-                cv2.imwrite(str(blur_path), best_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                staged_blur_path = rejected_blur_dir / blur_filename
+                final_blur_path = output_dir / "rejected_blur" / blur_filename
+                cv2.imwrite(str(staged_blur_path), best_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
                 decision_counts["rejected_blur"] += 1
                 _append_decision(decisions_path, {
@@ -112,7 +138,7 @@ def extract_frames(
                     "frame_number": best_frame_num,
                     "sharpness": sharpness,
                     "threshold": blur_threshold,
-                    "image_path": str(blur_path),
+                    "image_path": str(final_blur_path),
                     "reason": "below_blur_threshold",
                 })
                 continue
@@ -146,7 +172,8 @@ def extract_frames(
             next_sequence = _persist_candidate_group(
                 group=current_group,
                 next_sequence=next_sequence,
-                output_dir=output_dir,
+                staged_output_dir=staged_output_dir,
+                final_output_dir=output_dir,
                 decisions_path=decisions_path,
                 decision_counts=decision_counts,
                 video_id=video_id,
@@ -158,7 +185,8 @@ def extract_frames(
             next_sequence = _persist_candidate_group(
                 group=current_group,
                 next_sequence=next_sequence,
-                output_dir=output_dir,
+                staged_output_dir=staged_output_dir,
+                final_output_dir=output_dir,
                 decisions_path=decisions_path,
                 decision_counts=decision_counts,
                 video_id=video_id,
@@ -181,13 +209,17 @@ def extract_frames(
                 "candidate_count": candidate_count,
             },
             "files": {
-                "decisions_jsonl": str(decisions_path),
-                "rejected_blur_dir": str(rejected_blur_dir),
+                "decisions_jsonl": str(output_dir / "extraction_decisions.jsonl"),
+                "rejected_blur_dir": str(output_dir / "rejected_blur"),
                 "frames_dir": str(output_dir),
             },
         }
         manifest_path.write_text(json.dumps(manifest, indent=2))
+        _swap_output_dir(staged_output_dir, output_dir)
         return results
+    except Exception:
+        shutil.rmtree(staged_output_dir, ignore_errors=True)
+        raise
     finally:
         cap.release()
 
@@ -230,7 +262,8 @@ def _persist_candidate_group(
     *,
     group: list[dict[str, Any]],
     next_sequence: int,
-    output_dir: Path,
+    staged_output_dir: Path,
+    final_output_dir: Path,
     decisions_path: Path,
     decision_counts: dict[str, int],
     video_id: str,
@@ -239,12 +272,13 @@ def _persist_candidate_group(
     winner = max(group, key=lambda item: (item["sharpness"], -item["frame_number"]))
 
     filename = f"card_{next_sequence:04d}.jpg"
-    image_path = output_dir / filename
-    cv2.imwrite(str(image_path), winner["frame"], [cv2.IMWRITE_JPEG_QUALITY, 85])
+    staged_image_path = staged_output_dir / filename
+    final_image_path = final_output_dir / filename
+    cv2.imwrite(str(staged_image_path), winner["frame"], [cv2.IMWRITE_JPEG_QUALITY, 85])
 
     accepted_item = {
         "frame_number": winner["frame_number"],
-        "image_path": str(image_path),
+        "image_path": str(final_image_path),
         "sequence_index": next_sequence,
     }
     results.append(accepted_item)
@@ -256,7 +290,7 @@ def _persist_candidate_group(
         "sequence_index": next_sequence,
         "frame_number": winner["frame_number"],
         "sharpness": winner["sharpness"],
-        "image_path": str(image_path),
+        "image_path": str(final_image_path),
         "reason": "selected_for_ocr",
     })
 

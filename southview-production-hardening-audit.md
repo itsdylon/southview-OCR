@@ -273,6 +273,7 @@ The settings endpoint reads the config file, modifies it with regex, and writes 
 ### 2.12 P2 — No idempotency in frame extraction
 
 **File:** `src/southview/extraction/frame_extractor.py:44-47`
+**Status:** Closed on 2026-04-12. Real concern, but partially reduced by the earlier reprocessing snapshot work: the main pipeline would already restore old frame output on failure, yet the extractor itself still deleted prior manifests/decisions before new extraction finished. Frame extraction now writes into a sibling staging directory and swaps the completed result into place only after success, so previous frame output stays intact until a fresh extraction is complete.
 
 Previous extraction decisions are deleted at the start of extraction. If extraction is interrupted, previous decisions are lost and re-running produces potentially different frame selections.
 
