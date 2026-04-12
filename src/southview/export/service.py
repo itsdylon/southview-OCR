@@ -12,6 +12,10 @@ from southview.db.engine import get_session
 from southview.db.models import Card, OCRResult
 
 
+class ExportIncompleteError(ValueError):
+    """Raised when an export cannot be completed with all referenced files."""
+
+
 def _slug(s: str | None, max_len: int = 80) -> str:
     s = (s or "").strip().upper()
     s = re.sub(r"[^A-Z0-9]+", "_", s)
@@ -31,7 +35,6 @@ def export_approved_cards_zip(
     cfg = get_config()
     exports_root = Path(cfg["storage"]["exports_dir"]).resolve()
     out_dir = exports_root / "videos" / video_id
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     statuses = {"approved"}
     if include_corrected:
@@ -52,11 +55,12 @@ def export_approved_cards_zip(
         if not rows:
             raise ValueError("No approved/corrected cards found for this video_id")
 
-        exported_files: list[Path] = []
+        copy_plan: list[tuple[Path, Path]] = []
+        missing_sources: list[Path] = []
         for card, ocr in rows:
             src = Path(card.image_path).resolve()
             if not src.exists():
-                # skip missing source images; you can also choose to raise
+                missing_sources.append(src)
                 continue
 
             name = _slug(ocr.deceased_name, 80)
@@ -64,11 +68,21 @@ def export_approved_cards_zip(
             seq = f"{card.sequence_index:03d}"
 
             dst = out_dir / f"{name}_{dod}__card_{seq}{src.suffix}"
+            copy_plan.append((src, dst))
+
+        if missing_sources:
+            preview = ", ".join(path.name for path in missing_sources[:3])
+            if len(missing_sources) > 3:
+                preview = f"{preview}, ..."
+            raise ExportIncompleteError(
+                f"Cannot export video {video_id}: {len(missing_sources)} source image(s) are missing ({preview})."
+            )
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        exported_files: list[Path] = []
+        for src, dst in copy_plan:
             shutil.copy2(src, dst)
             exported_files.append(dst)
-
-        if not exported_files:
-            raise ValueError("All source images were missing; nothing exported.")
 
         zip_path = out_dir / f"{video_id}_export.zip"
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:

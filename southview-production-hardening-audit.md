@@ -291,6 +291,7 @@ Previous extraction decisions are deleted at the start of extraction. If extract
 ### 2.14 P2 — Incomplete export with silent file skipping
 
 **File:** `src/southview/export/service.py:24-79`
+**Status:** Closed on 2026-04-12. Real concern because an internal operator could walk away with an apparently successful ZIP that was silently missing approved cards. The export path now pre-validates every referenced card image and fails the export with a clear error if any source files are missing, and the API surfaces that condition as `409` instead of returning an incomplete archive.
 
 If a card's image file is missing during export, `FileNotFoundError` is silently caught and the file is skipped. The user receives an incomplete ZIP with no warning.
 
