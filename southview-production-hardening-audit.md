@@ -357,6 +357,7 @@ Card queries eagerly load `OCRResult` but not the `Video` relationship. If the A
 ### 3.6 P2 — No job deduplication guard
 
 **File:** `src/southview/jobs/manager.py:9-22`
+**Status:** Closed on 2026-04-12. This finding duplicated the earlier reliability issue `2.1` and is already resolved in code: `create_job()` now reuses an existing active job for the same video and returns `409` when a different active job type already exists.
 
 `create_job` does not check for existing active jobs for the same video. Double-clicking the "Start Job" button creates duplicate concurrent jobs.
 
