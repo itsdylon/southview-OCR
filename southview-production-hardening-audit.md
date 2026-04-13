@@ -379,6 +379,7 @@ Card queries eagerly load `OCRResult` but not the `Video` relationship. If the A
 ### 4.1 P1 — No global React error boundary
 
 **File:** `frontend/src/app/App.tsx`
+**Status:** Closed on 2026-04-12. Real concern because a render-time exception in the review or jobs UI would otherwise blank the whole operator interface. The app root is now wrapped in a global React error boundary that logs the error and shows a recovery screen with a reload button instead of leaving users on a white screen.
 
 The app has no error boundary component. A rendering error in any component crashes the entire application with a blank screen.
 
