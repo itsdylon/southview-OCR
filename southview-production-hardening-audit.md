@@ -366,6 +366,7 @@ Card queries eagerly load `OCRResult` but not the `Video` relationship. If the A
 ### 3.7 P3 — Backup restore lacks integrity verification
 
 **File:** `src/southview/backup/backup_manager.py:70-79`
+**Status:** Closed on 2026-04-12. Real concern because backup restore is an operator-only path with very high blast radius: a corrupted file could overwrite the live SQLite database. Backups now get a SHA-256 sidecar at creation time, restore verifies that checksum before copying, and SQLite `PRAGMA integrity_check` runs both against the backup and the restored database before the restore is considered successful.
 
 `restore_backup()` uses `shutil.copy2()` without verifying the backup file's integrity. A corrupted backup silently overwrites the live database.
 
