@@ -388,6 +388,7 @@ The app has no error boundary component. A rendering error in any component cras
 ### 4.2 P1 — No client-side upload size validation
 
 **File:** `frontend/src/app/components/upload-video-dialog.tsx:48-55`
+**Status:** Closed on 2026-04-12. Real concern because video uploads are large enough that waiting for the server to reject an oversize file would waste operator time and bandwidth. The upload dialog now enforces the same 10 GB ceiling on the client before upload begins and tells the user the limit directly in the picker UI.
 
 File type is validated but not file size. Users can attempt to upload arbitrarily large files, which will fail after a long wait with no clear error.
 
