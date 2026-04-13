@@ -414,6 +414,7 @@ Uploads use a single XHR request. Network interruptions or browser refreshes req
 ### 4.4 P2 — Optimistic UI updates without rollback
 
 **File:** `frontend/src/app/data/api-provider.tsx:225-284`
+**Status:** Closed on 2026-04-12. Real concern because the review UI could briefly claim a correction was saved even when the backend rejected it. The API-backed store now keeps a pre-mutation snapshot, rolls the optimistic card update back immediately on failure, refreshes from the server, and shows a toast so the operator knows the save did not stick.
 
 `updateCardFields()` and `updateCardStatus()` update local state immediately but catch API errors with only `console.error`. If the backend rejects the update, the UI shows stale data as saved.
 

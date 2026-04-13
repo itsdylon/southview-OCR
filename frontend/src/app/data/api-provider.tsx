@@ -5,6 +5,7 @@
 
 import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
+import { toast } from 'sonner';
 import type { CardWithOCR, Video, Job, OCRResult, PipelineStats, ReviewStatus, VideoStatus, JobType } from '../types/ocr';
 import * as api from './api';
 
@@ -223,7 +224,9 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
   );
 
   const updateCardFields = useCallback((cardId: string, fields: Partial<OCRResult>) => {
-    const currentCard = cards.find((c) => c.id === cardId);
+    const previousCards = cards;
+    const currentCard = previousCards.find((c) => c.id === cardId);
+    if (!currentCard) return;
     const reviewVersion = currentCard?.ocrResult.reviewVersion ?? 0;
 
     // Optimistic local update
@@ -247,12 +250,18 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
     const status = fields.reviewStatus ?? 'approved';
     api.submitReview(cardId, fields, status, reviewVersion).catch(async (error) => {
       console.error(error);
+      setCards(previousCards);
+      toast.error('Review update failed', {
+        description: error instanceof Error ? error.message : 'Could not save changes.',
+      });
       await refreshCards();
     });
   }, [cards, refreshCards]);
 
   const updateCardStatus = useCallback((cardId: string, status: ReviewStatus) => {
-    const currentCard = cards.find((c) => c.id === cardId);
+    const previousCards = cards;
+    const currentCard = previousCards.find((c) => c.id === cardId);
+    if (!currentCard) return;
     const reviewVersion = currentCard?.ocrResult.reviewVersion ?? 0;
 
     // Optimistic local update
@@ -276,6 +285,10 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
     // Send to backend
     api.submitReview(cardId, {}, status, reviewVersion).catch(async (error) => {
       console.error(error);
+      setCards(previousCards);
+      toast.error('Review status update failed', {
+        description: error instanceof Error ? error.message : 'Could not save status.',
+      });
       await refreshCards();
     });
   }, [cards, refreshCards]);
