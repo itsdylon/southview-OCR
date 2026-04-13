@@ -405,6 +405,7 @@ if (file.size > MAX_FILE_SIZE) {
 ### 4.3 P1 — No resumable upload support *
 
 **File:** `frontend/src/app/data/api.ts:352-406`
+**Status:** Closed on 2026-04-12 with no code change. Real concern in general, but not a good fit for this hardening pass. The current deployment is an internal browser client talking directly to a single Hetzner VPS, and adding true resumable uploads would require a coordinated protocol and storage redesign on both the frontend and backend. For this environment, the simpler mitigation is the upload-size guard already added in `4.2`; if operators begin uploading over unreliable WAN links or very large videos become common, this should be reopened as a product feature rather than a quick production fix.
 
 Uploads use a single XHR request. Network interruptions or browser refreshes require restarting the entire upload from scratch.
 
