@@ -432,12 +432,22 @@ export async function retryJob(jobId: string): Promise<Job> {
 export async function fetchCards(params?: {
   videoId?: string;
   status?: string;
+  statusIn?: string;
+  q?: string;
+  sort?: 'confidence' | 'sequence_index';
+  minConfidence?: number;
+  maxConfidence?: number;
   page?: number;
   perPage?: number;
 }): Promise<{ cards: CardWithOCR[]; total: number; page: number; pages: number }> {
   const searchParams = new URLSearchParams();
   if (params?.videoId) searchParams.set('video_id', params.videoId);
   if (params?.status) searchParams.set('status', params.status);
+  if (params?.statusIn) searchParams.set('status_in', params.statusIn);
+  if (params?.q) searchParams.set('q', params.q);
+  if (params?.sort) searchParams.set('sort', params.sort);
+  if (params?.minConfidence !== undefined) searchParams.set('min_confidence', String(params.minConfidence));
+  if (params?.maxConfidence !== undefined) searchParams.set('max_confidence', String(params.maxConfidence));
   if (params?.page) searchParams.set('page', String(params.page));
   if (params?.perPage) searchParams.set('per_page', String(params.perPage));
 

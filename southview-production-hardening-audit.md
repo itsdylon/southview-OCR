@@ -423,6 +423,7 @@ Uploads use a single XHR request. Network interruptions or browser refreshes req
 ### 4.5 P2 — Hardcoded per-page limit loads all cards on init
 
 **File:** `frontend/src/app/data/api-provider.tsx:68,92`
+**Status:** Closed on 2026-04-13. Real concern because the previous frontend boot path always pulled up to 500 cards into memory whether the user needed them or not. The shared API store now preloads only a small 50-card cache, and the heavy list views fetch paginated card slices on demand from the backend, merging visited pages into the cache so navigation into individual review screens still works without front-loading the entire corpus.
 
 `fetchCards({ perPage: 500 })` loads up to 500 cards at initialization. As the database grows, this causes slow initial loads and high memory usage.
 

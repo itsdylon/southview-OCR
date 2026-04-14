@@ -1,17 +1,26 @@
+import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { ArrowLeft, Play, Eye } from 'lucide-react';
+import { ArrowLeft, Play, Eye, ChevronLeft, ChevronRight } from 'lucide-react';
 import { DashboardLayout } from '../layouts/dashboard-layout';
 import { StatusChip } from '../components/status-chip';
 import { ConfidenceBadge } from '../components/confidence-badge';
+import * as api from '../data/api';
 import { useMockDb } from '../data/mock-db';
+import type { CardWithOCR } from '../types/ocr';
 import { getConfidenceBand } from '../types/ocr';
 
 export default function VideoDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { getVideoById, getJobsByVideoId, getCardsByVideoId, deleteVideo, deleteCard } = useMockDb();
+  const { getVideoById, getJobsByVideoId, deleteVideo, deleteCard, mergeCards } = useMockDb();
   const video = getVideoById(id!);
+  const [videoCards, setVideoCards] = useState<CardWithOCR[]>([]);
+  const [cardsPage, setCardsPage] = useState(1);
+  const [cardPages, setCardPages] = useState(1);
+  const [cardsLoading, setCardsLoading] = useState(false);
+  const [cardsError, setCardsError] = useState<string | null>(null);
+  const cardsPerPage = 50;
 
   if (!video) {
     return (
@@ -24,7 +33,38 @@ export default function VideoDetailPage() {
   }
 
   const videoJobs = getJobsByVideoId(video.id);
-  const videoCards = getCardsByVideoId(video.id);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCards() {
+      setCardsLoading(true);
+      setCardsError(null);
+      try {
+        const result = await api.fetchCards({
+          videoId: video.id,
+          page: cardsPage,
+          perPage: cardsPerPage,
+          sort: 'sequence_index',
+        });
+        if (cancelled) return;
+        setVideoCards(result.cards);
+        setCardsPage(result.page);
+        setCardPages(result.pages);
+        mergeCards(result.cards);
+      } catch (error) {
+        if (cancelled) return;
+        setCardsError(error instanceof Error ? error.message : 'Failed to load video cards.');
+      } finally {
+        if (!cancelled) setCardsLoading(false);
+      }
+    }
+
+    void loadCards();
+    return () => {
+      cancelled = true;
+    };
+  }, [cardsPage, mergeCards, video.id]);
 
   const handleStartPipeline = () => {
     toast.success('Pipeline started', { description: `Processing ${video.filename}` });
@@ -53,6 +93,19 @@ export default function VideoDetailPage() {
     try {
       await deleteCard(cardId);
       toast.success('Record deleted', { description: label });
+      if (videoCards.length === 1 && cardsPage > 1) {
+        setCardsPage((current) => current - 1);
+      } else {
+        const result = await api.fetchCards({
+          videoId: video.id,
+          page: cardsPage,
+          perPage: cardsPerPage,
+          sort: 'sequence_index',
+        });
+        setVideoCards(result.cards);
+        setCardPages(result.pages);
+        mergeCards(result.cards);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to delete record';
       toast.error('Delete failed', { description: message });
@@ -198,9 +251,14 @@ export default function VideoDetailPage() {
         </div>
 
         <div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Extracted Cards ({videoCards.length})</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Extracted Cards</h2>
           {videoCards.length > 0 ? (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              {cardsError && (
+                <div className="border-b border-red-100 bg-red-50 px-6 py-4 text-sm text-red-700">
+                  {cardsError}
+                </div>
+              )}
               <table className="w-full">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
@@ -264,10 +322,33 @@ export default function VideoDetailPage() {
                   ))}
                 </tbody>
               </table>
+              <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50 px-6 py-4">
+                <p className="text-sm text-gray-600">
+                  {cardsLoading ? 'Loading cards…' : `Page ${cardPages === 0 ? 0 : cardsPage} of ${cardPages}`}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCardsPage((current) => Math.max(1, current - 1))}
+                    disabled={cardsPage <= 1 || cardsLoading}
+                    className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setCardsPage((current) => Math.min(cardPages, current + 1))}
+                    disabled={cardsPage >= cardPages || cardsLoading}
+                    className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-8 text-center">
-              <p className="text-gray-600">No cards extracted yet</p>
+              <p className="text-gray-600">{cardsLoading ? 'Loading cards…' : 'No cards extracted yet'}</p>
             </div>
           )}
         </div>

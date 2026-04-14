@@ -14,6 +14,7 @@ interface MockDb {
   videos: Video[];
   jobs: Job[];
   pipelineStats: PipelineStats;
+  mergeCards: (cards: CardWithOCR[]) => void;
   updateCardFields: (cardId: string, fields: Partial<OCRResult>) => void;
   updateCardStatus: (cardId: string, status: ReviewStatus) => void;
   getCardsByVideoId: (videoId: string) => CardWithOCR[];
@@ -34,6 +35,20 @@ interface MockDb {
 }
 
 const MockDbContext = createContext<MockDb | null>(null);
+const INITIAL_CARD_PAGE_SIZE = 50;
+
+function mergeCardCache(existing: CardWithOCR[], incoming: CardWithOCR[]): CardWithOCR[] {
+  const byId = new Map(existing.map((card) => [card.id, card]));
+  for (const card of incoming) {
+    byId.set(card.id, card);
+  }
+
+  const incomingIds = new Set(incoming.map((card) => card.id));
+  return [
+    ...incoming,
+    ...existing.filter((card) => !incomingIds.has(card.id)).map((card) => byId.get(card.id) ?? card),
+  ];
+}
 
 export function MockDbProvider({ children }: { children: ReactNode }) {
   const [cards, setCards] = useState<CardWithOCR[]>([]);
@@ -66,11 +81,15 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
 
   const refreshCards = useCallback(async () => {
     try {
-      const result = await api.fetchCards({ perPage: 500 });
-      setCards(result.cards);
+      const result = await api.fetchCards({ perPage: INITIAL_CARD_PAGE_SIZE });
+      setCards((prev) => mergeCardCache(prev, result.cards));
     } catch (e) {
       console.error('Failed to fetch cards:', e);
     }
+  }, []);
+
+  const mergeCards = useCallback((incoming: CardWithOCR[]) => {
+    setCards((prev) => mergeCardCache(prev, incoming));
   }, []);
 
   const refreshStats = useCallback(async () => {
@@ -90,7 +109,7 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
         const [vids, jbs, crds, sts] = await Promise.all([
           api.fetchVideos(),
           api.fetchJobs(),
-          api.fetchCards({ perPage: 500 }),
+          api.fetchCards({ perPage: INITIAL_CARD_PAGE_SIZE }),
           api.fetchStats(),
         ]);
         if (cancelled) return;
@@ -356,6 +375,7 @@ export function MockDbProvider({ children }: { children: ReactNode }) {
         videos,
         jobs,
         pipelineStats,
+        mergeCards,
         updateCardFields,
         updateCardStatus,
         getCardsByVideoId,
