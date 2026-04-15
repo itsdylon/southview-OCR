@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from southview.config import get_config
 from southview.db.engine import get_session
 from southview.db.models import Card, OCRResult
+from southview.extraction.manifest import load_capture_metadata_lookup, normalize_image_path
 from southview.ocr.engine import get_ocr_engine_name
 from southview.ocr.errors import OCRProviderError
 from southview.ocr.parser_min import standardize_date_to_iso
@@ -136,6 +137,7 @@ def _persist_successful_ocr_result(
     card: Card,
     out: dict[str, Any],
     *,
+    force_review_flagged: bool,
     flag_threshold: float,
     auto_approve_threshold: float,
     auto_approve: bool,
@@ -147,12 +149,15 @@ def _persist_successful_ocr_result(
     raw_structured_fields = _canonical_raw_fields(fields)
     db_structured_fields = _normalized_db_fields(raw_structured_fields)
 
-    review_status = _review_status_from_conf(
-        conf,
-        flag_threshold=flag_threshold,
-        auto_approve_threshold=auto_approve_threshold,
-        auto_approve=auto_approve,
-    )
+    if force_review_flagged:
+        review_status = "flagged"
+    else:
+        review_status = _review_status_from_conf(
+            conf,
+            flag_threshold=flag_threshold,
+            auto_approve_threshold=auto_approve_threshold,
+            auto_approve=auto_approve,
+        )
 
     raw_fields_json = json.dumps(
         raw_structured_fields,
@@ -226,6 +231,7 @@ def run_ocr_for_video(
     if auto_approve_threshold is None:
         auto_approve_threshold = conf_config.get("auto_approve", 0.85)
     provider_fallback_engine = _provider_fallback_engine()
+    extraction_metadata = load_capture_metadata_lookup(video_id)
     session = get_session()
     processed = 0
     failed = 0
@@ -243,10 +249,11 @@ def run_ocr_for_video(
         total_cards = len(cards)
         cards_to_process = sum(1 for c in cards if force or c.ocr_result is None)
         logger.info(
-            "OCR batch start: video_id=%s total_cards=%d to_process=%d force=%s",
+            "OCR batch start: video_id=%s total_cards=%d to_process=%d weak_captures=%d force=%s",
             video_id,
             total_cards,
             cards_to_process,
+            sum(1 for item in extraction_metadata.values() if item.get("needs_review")),
             force,
         )
 
@@ -256,12 +263,15 @@ def run_ocr_for_video(
                 continue
 
             card_started = time.perf_counter()
+            capture_metadata = extraction_metadata.get(normalize_image_path(c.image_path), {})
+            force_review_flagged = bool(capture_metadata.get("needs_review"))
             try:
                 out = process_card_min(c.image_path)
                 _persist_successful_ocr_result(
                     session,
                     c,
                     out,
+                    force_review_flagged=force_review_flagged,
                     flag_threshold=flag_threshold,
                     auto_approve_threshold=auto_approve_threshold,
                     auto_approve=auto_approve,
@@ -315,6 +325,7 @@ def run_ocr_for_video(
                             session,
                             c,
                             fallback_out,
+                            force_review_flagged=force_review_flagged,
                             flag_threshold=flag_threshold,
                             auto_approve_threshold=auto_approve_threshold,
                             auto_approve=auto_approve,

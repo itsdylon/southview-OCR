@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -267,5 +268,87 @@ def test_run_ocr_for_video_non_provider_error_creates_flagged_result(tmp_db, mon
         ocr = session.query(OCRResult).filter_by(card_id=card_id).one()
         assert ocr.review_status == "flagged"
         assert "Could not decode image" in (ocr.error_message or "")
+    finally:
+        session.close()
+
+
+def test_run_ocr_for_video_flags_only_weak_captures_from_extraction_metadata(tmp_db, tmp_path, monkeypatch):
+    video_id, _ = _insert_video_and_cards("hash-batch-extraction-metadata", count=2)
+    frames_dir = tmp_path / "frames"
+    video_dir = frames_dir / video_id
+    video_dir.mkdir(parents=True, exist_ok=True)
+
+    session = get_session()
+    try:
+        cards = (
+            session.query(Card)
+            .filter_by(video_id=video_id)
+            .order_by(Card.sequence_index.asc())
+            .all()
+        )
+        for idx, card in enumerate(cards, start=1):
+            card.image_path = str(video_dir / f"card_{idx:04d}.jpg")
+        session.commit()
+        image_paths = [card.image_path for card in cards]
+    finally:
+        session.close()
+
+    (video_dir / "extraction_manifest.json").write_text(
+        json.dumps({
+            "accepted_frames": [
+                {
+                    "image_path": image_paths[0],
+                    "needs_review": True,
+                    "extraction_confidence": "low",
+                    "stable_duration_frames": 10,
+                    "selected_motion_score": 4.2,
+                    "selected_sharpness": 900.0,
+                    "duplicate_distance": None,
+                },
+                {
+                    "image_path": image_paths[1],
+                    "needs_review": False,
+                    "extraction_confidence": "high",
+                    "stable_duration_frames": 15,
+                    "selected_motion_score": 0.0,
+                    "selected_sharpness": 1800.0,
+                    "duplicate_distance": 22,
+                },
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    config = {
+        "storage": {"frames_dir": str(frames_dir)},
+        "ocr": {"confidence": {"review_threshold": 0.70, "auto_approve": 0.85}},
+    }
+    monkeypatch.setattr("southview.ocr.batch.get_config", lambda: config)
+    monkeypatch.setattr("southview.config.get_config", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(
+        "southview.ocr.batch.process_card_min",
+        lambda image_path: {
+            "raw_text": f"ocr for {Path(image_path).name}",
+            "card_confidence": 0.95,
+            "meta": {"ocr_engine_version": "gemini:gemini-2.5-flash"},
+            "fields": {"deceased_name": Path(image_path).stem},
+        },
+    )
+
+    result = run_ocr_for_video(video_id)
+    assert result["processed"] == 2
+    assert result["failed"] == 0
+
+    session = get_session()
+    try:
+        rows = (
+            session.query(OCRResult)
+            .join(Card, Card.id == OCRResult.card_id)
+            .filter(Card.video_id == video_id)
+            .order_by(Card.sequence_index.asc())
+            .all()
+        )
+        assert rows[0].review_status == "flagged"
+        assert rows[1].review_status == "approved"
     finally:
         session.close()

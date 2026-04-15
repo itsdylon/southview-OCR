@@ -59,6 +59,135 @@ def _has_previous_results(session, video_id: str) -> bool:
     return _frames_dir(video_id).exists()
 
 
+def _insert_extracted_cards(session, *, video_id: str, job_id: str, frame_results: list[dict]) -> int:
+    cfg = get_config().get("frame_extraction", {})
+    db_insert_batch_size = int(cfg.get("db_insert_batch_size", 500))
+    if db_insert_batch_size < 1:
+        db_insert_batch_size = 500
+
+    card_insert_started = time.perf_counter()
+    cards_inserted = 0
+    pending_in_batch = 0
+    for result in frame_results:
+        card = Card(
+            video_id=video_id,
+            job_id=job_id,
+            frame_number=result["frame_number"],
+            image_path=result["image_path"],
+            sequence_index=result["sequence_index"],
+        )
+        session.add(card)
+        cards_inserted += 1
+        pending_in_batch += 1
+        if pending_in_batch >= db_insert_batch_size:
+            session.commit()
+            pending_in_batch = 0
+    if pending_in_batch:
+        session.commit()
+
+    card_insert_elapsed = time.perf_counter() - card_insert_started
+    logger.info(
+        "Card insert complete: video_id=%s cards=%d elapsed=%.1fs batch_size=%d",
+        video_id,
+        cards_inserted,
+        card_insert_elapsed,
+        db_insert_batch_size,
+    )
+    return cards_inserted
+
+
+def run_extraction_only(job_id: str, video_id: str) -> None:
+    """Execute extraction-only processing: frame extraction without OCR."""
+    session = get_session()
+    extraction_started = time.perf_counter()
+    stashed_frames_dir: Path | None = None
+    try:
+        video = session.query(Video).get(video_id)
+        if video is None:
+            raise ValueError(f"Video not found: {video_id}")
+
+        mark_running(job_id)
+        video.status = "processing"
+        session.commit()
+
+        source_video_path = (video.filepath or "").strip()
+        if not source_video_path:
+            raise ValueError(
+                "Video source file is unavailable. Re-upload the video before starting or retrying this job."
+            )
+        if not Path(source_video_path).exists():
+            raise FileNotFoundError(
+                f"Video source file not found on disk: {source_video_path}. "
+                "Re-upload the video before starting or retrying this job."
+            )
+
+        had_previous_results = _has_previous_results(session, video_id)
+        if had_previous_results and bool(get_config().get("backup", {}).get("auto_backup_before_jobs", True)):
+            backup_path = create_backup()
+            logger.info("Created pre-reprocessing database backup: %s", backup_path)
+
+        stashed_frames_dir = _stash_existing_frames(video_id, job_id)
+        cleanup_previous_results(video_id, remove_frames=False)
+
+        logger.info("Extraction-only start: job_id=%s video_id=%s", job_id, video_id)
+        frame_started = time.perf_counter()
+        frame_results = extract_frames(source_video_path, video_id)
+        frame_elapsed = time.perf_counter() - frame_started
+        logger.info(
+            "Extraction-only frame selection complete: video_id=%s frames_selected=%d elapsed=%.1fs",
+            video_id,
+            len(frame_results),
+            frame_elapsed,
+        )
+        _discard_stashed_frames(stashed_frames_dir)
+        stashed_frames_dir = None
+        update_progress(job_id, 75)
+
+        cards_inserted = _insert_extracted_cards(
+            session,
+            video_id=video_id,
+            job_id=job_id,
+            frame_results=frame_results,
+        )
+        update_progress(job_id, 100)
+
+        mark_completed(job_id)
+        video.status = "extracted"
+        session.commit()
+        logger.info(
+            "Extraction-only complete: job_id=%s video_id=%s cards=%d elapsed=%.1fs",
+            job_id,
+            video_id,
+            cards_inserted,
+            time.perf_counter() - extraction_started,
+        )
+    except Exception as e:
+        logger.exception(
+            "Extraction-only failed: job_id=%s video_id=%s elapsed=%.1fs",
+            job_id,
+            video_id,
+            time.perf_counter() - extraction_started,
+        )
+        try:
+            _restore_stashed_frames(video_id, stashed_frames_dir)
+        except Exception:
+            logger.exception(
+                "Failed to restore stashed frames after extraction-only failure: video_id=%s",
+                video_id,
+            )
+        mark_failed(job_id, str(e))
+        try:
+            video = session.query(Video).get(video_id)
+            if video:
+                video.status = "failed"
+                session.commit()
+        except Exception:
+            session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def run_full_pipeline(job_id: str, video_id: str) -> None:
     """Execute the full processing pipeline: frame extraction → OCR."""
     session = get_session()
@@ -110,38 +239,11 @@ def run_full_pipeline(job_id: str, video_id: str) -> None:
         stashed_frames_dir = None
         update_progress(job_id, 50)
 
-        # Create Card records in chunks for large runs.
-        cfg = get_config().get("frame_extraction", {})
-        db_insert_batch_size = int(cfg.get("db_insert_batch_size", 500))
-        if db_insert_batch_size < 1:
-            db_insert_batch_size = 500
-
-        card_insert_started = time.perf_counter()
-        cards_inserted = 0
-        pending_in_batch = 0
-        for result in frame_results:
-            card = Card(
-                video_id=video_id,
-                job_id=job_id,
-                frame_number=result["frame_number"],
-                image_path=result["image_path"],
-                sequence_index=result["sequence_index"],
-            )
-            session.add(card)
-            cards_inserted += 1
-            pending_in_batch += 1
-            if pending_in_batch >= db_insert_batch_size:
-                session.commit()
-                pending_in_batch = 0
-        if pending_in_batch:
-            session.commit()
-        card_insert_elapsed = time.perf_counter() - card_insert_started
-        logger.info(
-            "Card insert complete: video_id=%s cards=%d elapsed=%.1fs batch_size=%d",
-            video_id,
-            cards_inserted,
-            card_insert_elapsed,
-            db_insert_batch_size,
+        cards_inserted = _insert_extracted_cards(
+            session,
+            video_id=video_id,
+            job_id=job_id,
+            frame_results=frame_results,
         )
 
         # Phase 2: OCR (50–100%)

@@ -337,7 +337,7 @@ def get_blur_queue(
                 items.append({
                     "segment_index": row.get("segment_index"),
                     "frame_number": row.get("frame_number"),
-                    "sharpness": row.get("sharpness"),
+                    "sharpness": row.get("sharpness", row.get("selected_sharpness")),
                     "image_path": row.get("image_path"),
                     "reason": row.get("reason"),
                 })

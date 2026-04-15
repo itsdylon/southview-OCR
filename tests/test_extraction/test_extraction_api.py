@@ -1,11 +1,15 @@
 """API integration tests for extraction-only endpoints."""
 
+import json
+import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from southview.api.app import create_app
+from southview.auth import hash_password
 from southview.db.engine import get_session
 from southview.db.models import Card, Job, Video
 from southview.jobs.manager import create_job
@@ -15,10 +19,23 @@ from southview.jobs.manager import create_job
 def client(tmp_path, tmp_db, tmp_config):
     """TestClient wired to a temp database and storage directories."""
     config = tmp_config
-    with patch("southview.api.app.init_db"), \
+    auth_env = {
+        "SOUTHVIEW_ENV": "development",
+        "SOUTHVIEW_AUTH_USERNAME": "admin",
+        "SOUTHVIEW_AUTH_PASSWORD_HASH": hash_password("test-password"),
+        "SOUTHVIEW_AUTH_SESSION_SECRET": "test-session-secret",
+        "SOUTHVIEW_AUTH_SECURE_COOKIES": "false",
+    }
+    with patch.dict(os.environ, auth_env, clear=False), \
+         patch("southview.api.app.init_db"), \
          patch("southview.api.app.get_config", return_value=config):
         app = create_app()
         with TestClient(app) as c:
+            login_response = c.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "test-password"},
+            )
+            assert login_response.status_code == 200
             yield c
 
 
@@ -161,6 +178,61 @@ class TestListFrames:
         assert frame["frame_number"] == 10
         assert frame["has_ocr"] is False
         assert "/static/frames/" in frame["image_url"]
+        assert frame["needs_review"] is None
+        assert frame["extraction_confidence"] is None
+
+    def test_returns_extraction_metadata_from_manifest(self, client, tmp_db, tmp_config):
+        session = get_session()
+        try:
+            video = Video(
+                filename="test.mp4",
+                filepath="/fake/path.mp4",
+                file_hash="manifest-test-hash",
+                status="extracted",
+            )
+            session.add(video)
+            session.flush()
+
+            card = Card(
+                video_id=video.id,
+                frame_number=42,
+                image_path=str(Path(tmp_config["storage"]["frames_dir"]) / video.id / "card_0001.jpg"),
+                sequence_index=1,
+            )
+            session.add(card)
+            session.commit()
+            vid = video.id
+        finally:
+            session.close()
+
+        video_dir = Path(tmp_config["storage"]["frames_dir"]) / vid
+        video_dir.mkdir(parents=True, exist_ok=True)
+        (video_dir / "extraction_manifest.json").write_text(
+            json.dumps({
+                "accepted_frames": [
+                    {
+                        "image_path": str(video_dir / "card_0001.jpg"),
+                        "needs_review": True,
+                        "extraction_confidence": "low",
+                        "stable_duration_frames": 10,
+                        "selected_motion_score": 4.5,
+                        "selected_sharpness": 812.0,
+                        "duplicate_distance": None,
+                    }
+                ]
+            }),
+            encoding="utf-8",
+        )
+
+        resp = client.get(f"/api/extraction/{vid}/frames")
+        assert resp.status_code == 200
+        frame = resp.json()["frames"][0]
+        assert frame["needs_review"] is True
+        assert frame["extraction_confidence"] == "low"
+        assert frame["stable_duration_frames"] == 10
+        assert frame["selected_motion_score"] == 4.5
+        assert frame["selected_sharpness"] == 812.0
+        assert frame["duplicate_distance"] is None
 
     def test_multiple_cards_ordered(self, client, tmp_db):
         """Multiple cards are returned ordered by sequence_index."""

@@ -85,9 +85,10 @@ def create_app() -> FastAPI:
     app.mount("/static/frames", StaticFiles(directory=str(frames_dir)), name="frames")
 
     # Import and include routers
-    from southview.api.routes import auth, backup, cards, export, jobs, videos, stats, settings
+    from southview.api.routes import auth, backup, cards, export, extraction, jobs, videos, stats, settings
     app.include_router(auth.router, prefix="/api")
     app.include_router(videos.router, prefix="/api")
+    app.include_router(extraction.router, prefix="/api")
     app.include_router(jobs.router, prefix="/api")
     app.include_router(cards.router, prefix="/api")
     app.include_router(export.router, prefix="/api")
