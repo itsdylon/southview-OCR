@@ -15,6 +15,7 @@ import type { Video } from '../types/ocr';
 
 const ACCEPTED_TYPES = ['video/mp4', 'video/x-msvideo', 'video/quicktime', 'video/x-matroska'];
 const ACCEPTED_EXTENSIONS = '.mp4,.avi,.mov,.mkv';
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024;
 
 type UploadPhase = 'pick' | 'uploading' | 'processing' | 'done';
 
@@ -49,6 +50,11 @@ export function UploadWidget({ onComplete, onCancel, showCancel }: UploadWidgetP
     setError(null);
     if (!ACCEPTED_TYPES.includes(f.type) && !f.name.match(/\.(mp4|avi|mov|mkv)$/i)) {
       setError('Unsupported file type. Please select a video file (.mp4, .avi, .mov, .mkv).');
+      return;
+    }
+    if (f.size > MAX_UPLOAD_BYTES) {
+      setFile(null);
+      setError(`File too large. Maximum size is ${formatFileSize(MAX_UPLOAD_BYTES)}.`);
       return;
     }
     setFile(f);
@@ -121,7 +127,7 @@ export function UploadWidget({ onComplete, onCancel, showCancel }: UploadWidgetP
                 Drag and drop a video file here
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                or click to browse &mdash; .mp4, .avi, .mov, .mkv
+                or click to browse &mdash; .mp4, .avi, .mov, .mkv up to {formatFileSize(MAX_UPLOAD_BYTES)}
               </p>
             </div>
             <input

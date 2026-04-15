@@ -6,10 +6,20 @@ from fastapi import APIRouter, HTTPException
 
 from southview.db.engine import get_session
 from southview.db.models import Card, Job, Video
+from southview.extraction.manifest import EXTRACTION_METADATA_FIELDS, load_capture_metadata_lookup, normalize_image_path
 from southview.jobs.manager import create_job
 from southview.jobs.runner import run_extraction_only
 
 router = APIRouter(tags=["extraction"])
+
+
+def _job_response(job: Job) -> dict[str, object]:
+    return {
+        "id": job.id,
+        "video_id": job.video_id,
+        "status": job.status,
+        "job_type": job.job_type,
+    }
 
 
 @router.post("/extraction/{video_id}/start")
@@ -23,19 +33,19 @@ def start_extraction(video_id: str):
     finally:
         session.close()
 
-    job = create_job(video_id, "extraction")
+    job, created = create_job(video_id, "extraction")
+    if not created:
+        if job.job_type != "extraction":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Video already has an active {job.job_type} job.",
+            )
+        return _job_response(job)
 
-    thread = threading.Thread(
-        target=run_extraction_only, args=(job.id, video_id), daemon=True
-    )
+    thread = threading.Thread(target=run_extraction_only, args=(job.id, video_id), daemon=True)
     thread.start()
 
-    return {
-        "id": job.id,
-        "video_id": video_id,
-        "status": "queued",
-        "job_type": "extraction",
-    }
+    return _job_response(job)
 
 
 @router.get("/extraction/{job_id}/status")
@@ -70,6 +80,7 @@ def list_extracted_frames(video_id: str):
     """List extracted frames for a video (preview before OCR)."""
     session = get_session()
     try:
+        metadata_lookup = load_capture_metadata_lookup(video_id)
         cards = (
             session.query(Card)
             .filter_by(video_id=video_id)
@@ -87,6 +98,10 @@ def list_extracted_frames(video_id: str):
                     "image_path": card.image_path,
                     "image_url": f"/static/frames/{card.video_id}/card_{card.sequence_index:04d}.png",
                     "has_ocr": card.ocr_result is not None,
+                    **{
+                        field: metadata_lookup.get(normalize_image_path(card.image_path), {}).get(field)
+                        for field in EXTRACTION_METADATA_FIELDS
+                    },
                 }
                 for card in cards
             ],

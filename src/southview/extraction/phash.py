@@ -6,6 +6,24 @@ import cv2
 import numpy as np
 
 
+def compute_dhash(
+    frame: np.ndarray,
+    *,
+    hash_size: int = 8,
+) -> np.ndarray:
+    """
+    Compute a difference hash for an image frame.
+
+    Returns a boolean array of shape (hash_size, hash_size).
+    """
+    if hash_size < 2:
+        raise ValueError("hash_size must be >= 2")
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    resized = cv2.resize(gray, (hash_size + 1, hash_size), interpolation=cv2.INTER_AREA)
+    return resized[:, 1:] > resized[:, :-1]
+
+
 def compute_phash(
     frame: np.ndarray,
     *,

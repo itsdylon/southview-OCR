@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import joinedload
 
 from southview.config import get_config
@@ -11,6 +11,10 @@ from southview.db.engine import get_session
 from southview.db.models import Card, OCRResult, STRUCTURED_OCR_FIELDS
 
 ALLOWED_STRUCTURED_FIELDS = set(STRUCTURED_OCR_FIELDS)
+
+
+class ReviewConflictError(ValueError):
+    """Raised when a review update is based on stale data."""
 
 
 def _parse_status_in(status_in: str | None) -> list[str] | None:
@@ -110,6 +114,7 @@ def list_cards(
                 "raw_fields_json": getattr(r, "raw_fields_json", None) if r else None,
                 "rotation_degrees": getattr(r, "rotation_degrees", 0) if r else 0,
                 "error_message": getattr(r, "error_message", None) if r else None,
+                "review_version": getattr(r, "review_version", 0) if r else 0,
             }
             for field in STRUCTURED_OCR_FIELDS:
                 row[field] = getattr(r, field, None) if r else None
@@ -149,6 +154,7 @@ def get_card_detail(card_id: str) -> dict[str, Any]:
             "confidence_score": float(r.confidence_score),
             "rotation_degrees": getattr(r, "rotation_degrees", 0),
             "review_status": r.review_status,
+            "review_version": getattr(r, "review_version", 0),
             "reviewed_by": r.reviewed_by,
             "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
             "error_message": getattr(r, "error_message", None),
@@ -163,6 +169,7 @@ def submit_review(
     *,
     fields: dict[str, Any] | None,
     status: str,
+    review_version: int | None,
     reviewed_by: str | None = None,
     structured_fields: dict | None = None,
 ) -> dict[str, Any]:
@@ -174,6 +181,8 @@ def submit_review(
     status = status.lower().strip()
     if status not in ("approved", "corrected"):
         raise ValueError("status must be 'approved' or 'corrected'")
+    if review_version is None:
+        raise ReviewConflictError("review_version is required for review updates")
 
     fields = fields or {}
 
@@ -194,28 +203,43 @@ def submit_review(
         if (not has_any_updates) and status != "approved":
             raise ValueError("If no fields are provided, status must be 'approved'")
 
-        # apply edits
+        updates: dict[str, Any] = {}
         for k, v in fields.items():
             if not hasattr(r, k):
                 raise ValueError(f"Unknown field: {k}")
-            setattr(r, k, v)
+            updates[k] = v
 
-        r.review_status = status
-        r.reviewed_by = reviewed_by
-        r.reviewed_at = datetime.utcnow()
+        now = datetime.utcnow()
+        updates["review_status"] = status
+        updates["reviewed_by"] = reviewed_by
+        updates["reviewed_at"] = now
 
         # Apply structured field updates
         if structured_fields:
             for key, value in structured_fields.items():
                 if key in ALLOWED_STRUCTURED_FIELDS:
-                    setattr(r, key, value)
+                    updates[key] = value
 
+        updates["review_version"] = review_version + 1
 
+        result = session.execute(
+            update(OCRResult)
+            .where(
+                OCRResult.card_id == card_id,
+                OCRResult.review_version == review_version,
+            )
+            .values(**updates)
+        )
+        if result.rowcount != 1:
+            session.rollback()
+            raise ReviewConflictError("This card was updated by another reviewer. Refresh and retry.")
         session.commit()
+        session.refresh(r)
 
         return {
             "card_id": card_id,
             "review_status": r.review_status,
+            "review_version": getattr(r, "review_version", 0),
             "reviewed_by": r.reviewed_by,
             "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
             **{field: getattr(r, field, None) for field in STRUCTURED_OCR_FIELDS},

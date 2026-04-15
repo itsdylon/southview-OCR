@@ -13,6 +13,8 @@ from sqlalchemy.orm import selectinload
 from southview.config import get_config
 from southview.db.engine import get_session
 from southview.db.models import Card, OCRResult
+from southview.extraction.manifest import load_capture_metadata_lookup, normalize_image_path
+from southview.ocr.engine import get_ocr_engine_name
 from southview.ocr.errors import OCRProviderError
 from southview.ocr.parser_min import standardize_date_to_iso
 from southview.ocr.processor_min import process_card_min
@@ -119,6 +121,101 @@ def _review_status_from_conf(
     return "pending"
 
 
+def _provider_fallback_engine() -> str | None:
+    cfg = get_config().get("ocr", {})
+    primary = get_ocr_engine_name()
+    fallback = str(cfg.get("provider_fallback_engine", "tesseract")).strip().lower()
+    if primary != "gemini":
+        return None
+    if fallback in {"", "none", primary}:
+        return None
+    return fallback
+
+
+def _persist_successful_ocr_result(
+    session,
+    card: Card,
+    out: dict[str, Any],
+    *,
+    force_review_flagged: bool,
+    flag_threshold: float,
+    auto_approve_threshold: float,
+    auto_approve: bool,
+) -> None:
+    fields = out.get("fields", {}) or {}
+    raw_text = out.get("raw_text", "") or ""
+    conf = float(out.get("card_confidence", 0.0) or 0.0)
+    ocr_engine_version = (out.get("meta", {}) or {}).get("ocr_engine_version")
+    raw_structured_fields = _canonical_raw_fields(fields)
+    db_structured_fields = _normalized_db_fields(raw_structured_fields)
+
+    if force_review_flagged:
+        review_status = "flagged"
+    else:
+        review_status = _review_status_from_conf(
+            conf,
+            flag_threshold=flag_threshold,
+            auto_approve_threshold=auto_approve_threshold,
+            auto_approve=auto_approve,
+        )
+
+    raw_fields_json = json.dumps(
+        raw_structured_fields,
+        ensure_ascii=False,
+    )
+
+    if card.ocr_result is None:
+        record = OCRResult(
+            card_id=card.id,
+            raw_text=raw_text,
+            raw_fields_json=raw_fields_json,
+            confidence_score=conf,
+            review_status=review_status,
+            ocr_engine_version=ocr_engine_version,
+            processed_at=datetime.utcnow(),
+            error_message=None,
+            **db_structured_fields,
+        )
+        session.add(record)
+    else:
+        record = card.ocr_result
+        record.raw_text = raw_text
+        record.raw_fields_json = raw_fields_json
+        record.confidence_score = conf
+        record.review_status = review_status
+        record.ocr_engine_version = ocr_engine_version
+        record.processed_at = datetime.utcnow()
+        record.error_message = None
+        _apply_structured_fields(record, db_structured_fields)
+
+    session.commit()
+
+
+def _persist_failed_ocr_result(session, card: Card, message: str) -> None:
+    if card.ocr_result is None:
+        empty_structured = {key: None for key in STRUCTURED_FIELDS}
+        record = OCRResult(
+            card_id=card.id,
+            raw_text="",
+            raw_fields_json=None,
+            confidence_score=0.0,
+            review_status="flagged",
+            processed_at=datetime.utcnow(),
+            error_message=message,
+            **empty_structured,
+        )
+        session.add(record)
+    else:
+        record = card.ocr_result
+        record.error_message = message
+        record.confidence_score = 0.0
+        record.review_status = "flagged"
+        record.processed_at = datetime.utcnow()
+        _apply_structured_fields(record, {key: None for key in STRUCTURED_FIELDS})
+
+    session.commit()
+
+
 def run_ocr_for_video(
     video_id: str,
     *,
@@ -133,6 +230,8 @@ def run_ocr_for_video(
         flag_threshold = conf_config.get("review_threshold", 0.70)
     if auto_approve_threshold is None:
         auto_approve_threshold = conf_config.get("auto_approve", 0.85)
+    provider_fallback_engine = _provider_fallback_engine()
+    extraction_metadata = load_capture_metadata_lookup(video_id)
     session = get_session()
     processed = 0
     failed = 0
@@ -150,10 +249,11 @@ def run_ocr_for_video(
         total_cards = len(cards)
         cards_to_process = sum(1 for c in cards if force or c.ocr_result is None)
         logger.info(
-            "OCR batch start: video_id=%s total_cards=%d to_process=%d force=%s",
+            "OCR batch start: video_id=%s total_cards=%d to_process=%d weak_captures=%d force=%s",
             video_id,
             total_cards,
             cards_to_process,
+            sum(1 for item in extraction_metadata.values() if item.get("needs_review")),
             force,
         )
 
@@ -163,52 +263,19 @@ def run_ocr_for_video(
                 continue
 
             card_started = time.perf_counter()
+            capture_metadata = extraction_metadata.get(normalize_image_path(c.image_path), {})
+            force_review_flagged = bool(capture_metadata.get("needs_review"))
             try:
                 out = process_card_min(c.image_path)
-                fields = out.get("fields", {}) or {}
-                raw_text = out.get("raw_text", "") or ""
-                conf = float(out.get("card_confidence", 0.0) or 0.0)
-                ocr_engine_version = (out.get("meta", {}) or {}).get("ocr_engine_version")
-                raw_structured_fields = _canonical_raw_fields(fields)
-                db_structured_fields = _normalized_db_fields(raw_structured_fields)
-
-                review_status = _review_status_from_conf(
-                    conf,
+                _persist_successful_ocr_result(
+                    session,
+                    c,
+                    out,
+                    force_review_flagged=force_review_flagged,
                     flag_threshold=flag_threshold,
                     auto_approve_threshold=auto_approve_threshold,
                     auto_approve=auto_approve,
                 )
-
-                raw_fields_json = json.dumps(
-                    raw_structured_fields,
-                    ensure_ascii=False,
-                )
-
-                if c.ocr_result is None:
-                    r = OCRResult(
-                        card_id=c.id,
-                        raw_text=raw_text,
-                        raw_fields_json=raw_fields_json,
-                        confidence_score=conf,
-                        review_status=review_status,
-                        ocr_engine_version=ocr_engine_version,
-                        processed_at=datetime.utcnow(),
-                        error_message=None,
-                        **db_structured_fields,
-                    )
-                    session.add(r)
-                else:
-                    r = c.ocr_result
-                    r.raw_text = raw_text
-                    r.raw_fields_json = raw_fields_json
-                    r.confidence_score = conf
-                    r.review_status = review_status
-                    r.ocr_engine_version = ocr_engine_version
-                    r.processed_at = datetime.utcnow()
-                    r.error_message = None
-                    _apply_structured_fields(r, db_structured_fields)
-
-                session.commit()
                 processed += 1
                 processed_or_failed += 1
 
@@ -242,14 +309,46 @@ def run_ocr_for_video(
 
             except OCRProviderError as e:
                 session.rollback()
-                failed += 1
-                processed_or_failed += 1
                 msg = str(e)
                 if first_error is None:
                     first_error = msg
+                if provider_fallback_engine is not None:
+                    logger.warning(
+                        "OCR provider failure for card %s; retrying with fallback engine %s: %s",
+                        c.id,
+                        provider_fallback_engine,
+                        msg,
+                    )
+                    try:
+                        fallback_out = process_card_min(c.image_path, engine_name=provider_fallback_engine)
+                        _persist_successful_ocr_result(
+                            session,
+                            c,
+                            fallback_out,
+                            force_review_flagged=force_review_flagged,
+                            flag_threshold=flag_threshold,
+                            auto_approve_threshold=auto_approve_threshold,
+                            auto_approve=auto_approve,
+                        )
+                        processed += 1
+                        processed_or_failed += 1
+                        logger.info(
+                            "OCR fallback succeeded: video_id=%s card_id=%s engine=%s",
+                            video_id,
+                            c.id,
+                            provider_fallback_engine,
+                        )
+                        continue
+                    except Exception as fallback_exc:
+                        session.rollback()
+                        msg = f"{msg}; fallback {provider_fallback_engine} failed: {fallback_exc}"
+
+                failed += 1
+                processed_or_failed += 1
+                _persist_failed_ocr_result(session, c, msg)
                 logger.error(
                     (
-                        "OCR provider failure: video_id=%s card_id=%s elapsed=%.2fs "
+                        "OCR provider failure recorded: video_id=%s card_id=%s elapsed=%.2fs "
                         "processed=%d failed=%d error=%s"
                     ),
                     video_id,
@@ -259,12 +358,7 @@ def run_ocr_for_video(
                     failed,
                     msg,
                 )
-                raise RuntimeError(
-                    (
-                        "OCR provider failure. Batch aborted before completion. "
-                        f"Processed={processed}, failed={failed}. Error: {msg}"
-                    )
-                ) from e
+                continue
 
             except Exception as e:
                 failed += 1
@@ -273,29 +367,7 @@ def run_ocr_for_video(
                 if first_error is None:
                     first_error = msg
                 logger.warning("OCR failed for card %s (%s): %s", c.id, c.image_path, msg)
-
-                if c.ocr_result is None:
-                    empty_structured = {key: None for key in STRUCTURED_FIELDS}
-                    r = OCRResult(
-                        card_id=c.id,
-                        raw_text="",
-                        raw_fields_json=None,
-                        confidence_score=0.0,
-                        review_status="flagged",
-                        processed_at=datetime.utcnow(),
-                        error_message=msg,
-                        **empty_structured,
-                    )
-                    session.add(r)
-                else:
-                    r = c.ocr_result
-                    r.error_message = msg
-                    r.confidence_score = 0.0
-                    r.review_status = "flagged"
-                    r.processed_at = datetime.utcnow()
-                    _apply_structured_fields(r, {key: None for key in STRUCTURED_FIELDS})
-
-                session.commit()
+                _persist_failed_ocr_result(session, c, msg)
                 elapsed_card = time.perf_counter() - card_started
                 logger.warning(
                     "OCR card failed: video_id=%s card_id=%s elapsed=%.2fs error=%s",

@@ -10,23 +10,43 @@ storage:
   exports_dir: data/exports
 
 frame_extraction:
-  sample_rate: 3                # Process every Nth frame
-  transition_threshold: 0.4     # Histogram diff threshold for scene change
-  min_stable_frames: 5          # Minimum stable frames to count as a card
+  analysis_width: 320           # Resize analysis frames to this width before motion scoring
+  roi_margin_x: 0.20            # Ignore left/right edges when measuring motion
+  roi_margin_top: 0.15          # Ignore top edge when measuring motion
+  roi_margin_bottom: 0.20       # Ignore bottom edge when measuring motion
+  enter_motion_threshold: 12.0  # Enter transitioning after N consecutive frames at/above this MAD
+  enter_motion_consecutive_frames: 2
+  exit_motion_threshold: 6.0    # Enter stable after N consecutive frames at/below this MAD
+  exit_motion_consecutive_frames: 5
+  min_emit_stable_frames: 10    # Emit one capture only after a stable window reaches this length
+  low_confidence_stable_frames: 12
+  low_motion_candidate_threshold: 6.0
+  fallback_motion_weight: 4.0
+  missed_insert_check_start_frames: 18
+  missed_insert_check_interval_frames: 6
+  missed_insert_cell_threshold: 8.0
+  missed_insert_required_cells: 2
+  missed_insert_required_checks: 2
+  missed_insert_seed_recent_frames: 6
   sharpness_method: laplacian   # Sharpness metric
   blank_threshold: 50.0         # Minimum Laplacian variance to consider a frame non-blank
-  blur_threshold: 50.0          # Reject best-frame candidates below this as blurry
-  dedup_enabled: true           # Drop adjacent perceptual duplicates after best-frame selection
-  dedup_hamming_threshold: 8    # Max pHash Hamming distance to treat adjacent cards as duplicates
+  blur_threshold: 50.0          # Reject selected captures below this sharpness as blurry
+  dedup_enabled: true           # Drop adjacent ROI dHash duplicates after stable-window selection
+  dedup_hamming_threshold: 6    # Max dHash Hamming distance to treat adjacent captures as duplicates
+  dhash_size: 8
   db_insert_batch_size: 500     # Commit Card inserts in batches to scale to large jobs
 
 ocr:
   engine: gemini
+  provider_fallback_engine: tesseract
   gemini:
     model: gemini-2.5-flash
     api_key_env: GEMINI_API_KEY
     endpoint: https://generativelanguage.googleapis.com/v1beta
     timeout_seconds: 30
+    max_retries: 3
+    retry_backoff_seconds: 1.0
+    retry_jitter_seconds: 0.25
     try_rotations: false
     rotation_mode: all   # all | sideways | none
     structured_fallback: true
@@ -59,3 +79,4 @@ backup:
 api:
   host: 0.0.0.0
   port: 8000
+  staged_upload_cleanup_age_seconds: 86400

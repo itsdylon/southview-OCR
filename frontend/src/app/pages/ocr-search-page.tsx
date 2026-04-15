@@ -1,21 +1,74 @@
-import { useState } from 'react';
-import { Search as SearchIcon, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { useDeferredValue, useEffect, useState } from 'react';
+import { Search as SearchIcon, ChevronDown, ChevronUp, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { DashboardLayout } from '../layouts/dashboard-layout';
 import { ConfidenceBadge } from '../components/confidence-badge';
 import { StatusChip } from '../components/status-chip';
-import { useCardStore } from '../data/mock-db';
+import * as api from '../data/api';
+import { useMockDb } from '../data/mock-db';
 import { getConfidenceBand } from '../types/ocr';
 import type { CardWithOCR } from '../types/ocr';
 
 export default function OCRSearchPage() {
-  const { cards } = useCardStore();
+  const { mergeCards } = useMockDb();
   const [searchQuery, setSearchQuery] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [selectedCard, setSelectedCard] = useState<CardWithOCR | null>(null);
+  const [cards, setCards] = useState<CardWithOCR[]>([]);
+  const [totalCards, setTotalCards] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const deferredSearchQuery = useDeferredValue(searchQuery.trim());
+  const perPage = 50;
 
-  const filteredCards = cards.filter((c) =>
-    c.ocrResult?.deceased_name?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  useEffect(() => {
+    setPage(1);
+  }, [deferredSearchQuery]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await api.fetchCards({
+          q: deferredSearchQuery || undefined,
+          page,
+          perPage,
+          sort: 'sequence_index',
+        });
+        if (cancelled) return;
+        setCards(result.cards);
+        setTotalCards(result.total);
+        setPage(result.page);
+        setPages(result.pages);
+        mergeCards(result.cards);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Failed to load search results.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [deferredSearchQuery, mergeCards, page]);
+
+  useEffect(() => {
+    if (selectedCard && !cards.some((card) => card.id === selectedCard.id)) {
+      setSelectedCard(cards[0] ?? null);
+    }
+    if (!selectedCard && cards.length > 0) {
+      setSelectedCard(cards[0]);
+    }
+  }, [cards, selectedCard]);
+
+  const filteredCards = cards;
 
   const getPreviewTransform = (rotationDegrees?: number) => {
     const rotation = rotationDegrees || 0;
@@ -109,9 +162,19 @@ export default function OCRSearchPage() {
           {/* Results List */}
           <div className="flex-1">
             <p className="text-sm text-gray-600 mb-4">
-              {filteredCards.length} results found
+              {loading ? 'Searching…' : `${totalCards} results found`}
             </p>
+            {error && (
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {error}
+              </div>
+            )}
             <div className="space-y-3">
+              {!loading && filteredCards.length === 0 && (
+                <div className="rounded-lg border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500">
+                  No records match your search.
+                </div>
+              )}
               {filteredCards.map((card) => (
                 <button
                   key={card.id}
@@ -146,6 +209,29 @@ export default function OCRSearchPage() {
                   </div>
                 </button>
               ))}
+            </div>
+            <div className="mt-6 flex items-center justify-between">
+              <p className="text-sm text-gray-600">
+                Page {pages === 0 ? 0 : page} of {pages}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={page <= 1 || loading}
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  Previous
+                </button>
+                <button
+                  onClick={() => setPage((current) => Math.min(pages, current + 1))}
+                  disabled={page >= pages || loading}
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
           

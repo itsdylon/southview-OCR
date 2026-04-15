@@ -12,6 +12,7 @@ from southview.db.models import Card, STRUCTURED_OCR_FIELDS
 from southview.review.service import (
     list_cards as svc_list_cards,
     get_card_detail as svc_get_card_detail,
+    ReviewConflictError,
     submit_review as svc_submit_review,
     batch_approve as svc_batch_approve,
 )
@@ -44,6 +45,7 @@ class CardListItem(BaseModel):
     review_status: str | None = None
     confidence_score: float | None = None
     rotation_degrees: int | None = 0
+    review_version: int | None = 0
     deceased_name: str | None = None
     address: str | None = None
     owner: str | None = None
@@ -96,6 +98,7 @@ class CardDetailResponse(BaseModel):
 class ReviewRequest(BaseModel):
     fields: dict[str, Any] | None = None
     status: str  # only 'approved' or 'corrected'
+    review_version: int | None = None
     reviewed_by: str | None = None
     # Structured fields (all optional for per-field updates)
     deceased_name: str | None = None
@@ -184,6 +187,7 @@ def get_card_detail_endpoint(card_id: str):
             "rotation_degrees": d.get("rotation_degrees", 0),
             "word_confidences": d.get("word_confidences"),
             "review_status": d.get("review_status", "pending"),
+            "review_version": d.get("review_version", 0),
             "reviewed_by": d.get("reviewed_by"),
             "reviewed_at": d.get("reviewed_at"),
             "raw_fields_json": d.get("raw_fields_json"),
@@ -221,9 +225,12 @@ def submit_review_endpoint(card_id: str, body: ReviewRequest):
             card_id,
             fields=body.fields,
             status=body.status,
+            review_version=body.review_version,
             reviewed_by=body.reviewed_by,
             structured_fields=structured_fields if structured_fields else None,
         )
+    except ReviewConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

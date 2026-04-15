@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { Filter, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Filter, ArrowRight, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { DashboardLayout } from '../layouts/dashboard-layout';
 import { ConfidenceBadge } from '../components/confidence-badge';
 import { StatusChip } from '../components/status-chip';
-import { useCardStore } from '../data/mock-db';
-import { getConfidenceBand } from '../types/ocr';
+import * as api from '../data/api';
+import { useMockDb } from '../data/mock-db';
+import { getConfidenceBand, type CardWithOCR } from '../types/ocr';
 import type { ReviewStatus } from '../types/ocr';
 
 type StatusFilterValue = ReviewStatus | 'all' | 'needs-review';
@@ -23,10 +24,18 @@ function isValidStatusFilter(value: string): value is StatusFilterValue {
 }
 
 export default function OCRReviewQueuePage() {
-  const { cards } = useCardStore();
+  const { mergeCards } = useMockDb();
   const [searchParams] = useSearchParams();
   const [showFilters, setShowFilters] = useState(false);
   const [confidenceBand, setConfidenceBand] = useState<string>('all');
+  const [cards, setCards] = useState<CardWithOCR[]>([]);
+  const [totalCards, setTotalCards] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<Record<string, number>>({});
+  const perPage = 50;
 
   // Derive initial status filter from URL ?filter= param, defaulting to needs-review
   const filterParam = searchParams.get('filter');
@@ -41,36 +50,62 @@ export default function OCRReviewQueuePage() {
     }
   }, [filterParam]);
 
-  // Sort by priority: flagged first, then pending, then auto-approved
-  const sortedCards = [...cards].sort((a, b) => {
-    if (!a.ocrResult || !b.ocrResult) return 0;
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, confidenceBand]);
 
-    const priorityMap = { flagged: 3, pending: 2, approved: 1, corrected: 1 };
-    const aPriority = priorityMap[a.ocrResult.reviewStatus] || 0;
-    const bPriority = priorityMap[b.ocrResult.reviewStatus] || 0;
+  useEffect(() => {
+    let cancelled = false;
 
-    if (aPriority !== bPriority) return bPriority - aPriority;
-    return a.ocrResult.confidenceScore - b.ocrResult.confidenceScore;
-  });
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const params: Parameters<typeof api.fetchCards>[0] = { page, perPage };
+        if (statusFilter === 'needs-review') {
+          params.statusIn = 'flagged,pending';
+        } else if (statusFilter !== 'all') {
+          params.status = statusFilter;
+        }
 
-  const filteredCards = sortedCards.filter((c) => {
-    if (!c.ocrResult) return false;
-    if (statusFilter === 'needs-review') {
-      if (c.ocrResult.reviewStatus !== 'flagged' && c.ocrResult.reviewStatus !== 'pending')
-        return false;
-    } else if (statusFilter !== 'all' && c.ocrResult.reviewStatus !== statusFilter) {
-      return false;
+        if (confidenceBand === 'flagged') {
+          params.maxConfidence = 0.699999;
+        } else if (confidenceBand === 'pending-review') {
+          params.minConfidence = 0.7;
+          params.maxConfidence = 0.849999;
+        } else if (confidenceBand === 'auto-approved') {
+          params.minConfidence = 0.85;
+        }
+
+        const [result, counts] = await Promise.all([
+          api.fetchCards(params),
+          api.fetchStats(),
+        ]);
+
+        if (cancelled) return;
+        setCards(result.cards);
+        setTotalCards(result.total);
+        setPage(result.page);
+        setPages(result.pages);
+        setStats(counts);
+        mergeCards(result.cards);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Failed to load cards.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-    if (confidenceBand !== 'all') {
-      const band = getConfidenceBand(c.ocrResult.confidenceScore);
-      if (band !== confidenceBand) return false;
-    }
-    return true;
-  });
 
-  // Count by priority
-  const flaggedCount = cards.filter((c) => c.ocrResult?.reviewStatus === 'flagged').length;
-  const pendingCount = cards.filter((c) => c.ocrResult?.reviewStatus === 'pending').length;
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [confidenceBand, mergeCards, page, statusFilter]);
+  const filteredCards = cards;
+  const flaggedCount = stats.flagged ?? 0;
+  const pendingCount = stats.pending ?? 0;
+  const autoApprovedCount = stats.auto_approved ?? 0;
 
   return (
     <DashboardLayout>
@@ -106,7 +141,7 @@ export default function OCRReviewQueuePage() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Review Queue</h1>
             <p className="text-gray-600">
-              {filteredCards.length} cards • Sorted by priority (flagged first)
+              {loading ? 'Loading cards…' : `${totalCards} cards`} • Sorted by priority (flagged first)
             </p>
           </div>
           <button
@@ -183,7 +218,7 @@ export default function OCRReviewQueuePage() {
             </div>
             <div>
               <p className="text-2xl font-bold text-gray-900">
-                {cards.filter((c) => c.ocrResult && c.ocrResult.confidenceScore >= 0.85).length}
+                {autoApprovedCount}
               </p>
               <p className="text-sm text-gray-600">Auto-approved (≥85%)</p>
             </div>
@@ -192,6 +227,11 @@ export default function OCRReviewQueuePage() {
 
         {/* Cards Table */}
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          {error && (
+            <div className="border-b border-red-100 bg-red-50 px-6 py-4 text-sm text-red-700">
+              {error}
+            </div>
+          )}
           <table className="w-full">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
@@ -204,6 +244,13 @@ export default function OCRReviewQueuePage() {
               </tr>
             </thead>
             <tbody>
+              {!loading && filteredCards.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-10 text-center text-sm text-gray-500">
+                    No cards match the current filters.
+                  </td>
+                </tr>
+              )}
               {filteredCards.map((card) => (
                 <tr key={card.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="px-6 py-4">
@@ -249,6 +296,29 @@ export default function OCRReviewQueuePage() {
               ))}
             </tbody>
           </table>
+          <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50 px-6 py-4">
+            <p className="text-sm text-gray-600">
+              Page {pages === 0 ? 0 : page} of {pages}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                disabled={page <= 1 || loading}
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Previous
+              </button>
+              <button
+                onClick={() => setPage((current) => Math.min(pages, current + 1))}
+                disabled={page >= pages || loading}
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </DashboardLayout>

@@ -2,6 +2,7 @@ import { RouterProvider } from 'react-router';
 import { Toaster } from 'sonner';
 import { router } from './routes';
 import { AuthProvider, useAuth } from './auth/auth-provider';
+import { AppErrorBoundary } from './components/app-error-boundary';
 import { MockDbProvider, useApiState } from './data/mock-db';
 
 function AppContent() {
@@ -71,7 +72,9 @@ function RoutedApp() {
 export default function App() {
   return (
     <AuthProvider>
-      <RoutedApp />
+      <AppErrorBoundary>
+        <RoutedApp />
+      </AppErrorBoundary>
     </AuthProvider>
   );
 }

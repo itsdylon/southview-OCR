@@ -63,6 +63,7 @@ class Video(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_status", "status"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     video_id: Mapped[str] = mapped_column(String(36), ForeignKey("videos.id", ondelete="CASCADE"), nullable=False)
@@ -126,6 +127,7 @@ class OCRResult(Base):
     processed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    review_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     reviewed_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

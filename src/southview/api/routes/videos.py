@@ -1,12 +1,15 @@
 """Video upload and listing endpoints."""
 
 import json
+import logging
 import math
 import shutil
-import tempfile
+import threading
+import time
+import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel
 
 from southview.config import get_config
@@ -17,6 +20,12 @@ from southview.ingest.video_upload import (
 )
 
 router = APIRouter(tags=["videos"])
+logger = logging.getLogger(__name__)
+_DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
+_DEFAULT_MAX_CONCURRENT_UPLOADS_PER_CLIENT = 2
+_DEFAULT_STAGED_UPLOAD_CLEANUP_AGE_SECONDS = 24 * 60 * 60
+_ACTIVE_UPLOADS_BY_CLIENT: dict[str, int] = {}
+_UPLOAD_LIMIT_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -71,12 +80,104 @@ def _resolution_str(w: int | None, h: int | None) -> str | None:
     return None
 
 
+def _safe_upload_name(filename: str | None, fallback_suffix: str) -> str:
+    """Return a basename-only filename safe to use under storage staging paths."""
+    raw_name = (filename or "").replace("\\", "/")
+    safe_name = Path(raw_name).name
+    if safe_name in {"", ".", ".."}:
+        return f"upload{fallback_suffix}"
+    return safe_name
+
+
+def _require_video(video_id: str):
+    """Look up a video first so path parameters cannot become filesystem paths."""
+    video = svc_get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return video
+
+
+def _upload_limits() -> tuple[int, int]:
+    config = get_config().get("api", {})
+    max_upload_bytes = int(config.get("max_upload_bytes", _DEFAULT_MAX_UPLOAD_BYTES))
+    max_concurrent = int(
+        config.get(
+            "max_concurrent_uploads_per_client",
+            _DEFAULT_MAX_CONCURRENT_UPLOADS_PER_CLIENT,
+        )
+    )
+    return max(1, max_upload_bytes), max(1, max_concurrent)
+
+
+def _videos_dir() -> Path:
+    videos_dir = Path(get_config()["storage"]["videos_dir"])
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    return videos_dir
+
+
+def _staged_upload_path(suffix: str) -> Path:
+    return _videos_dir() / f".upload-{uuid.uuid4().hex}{suffix}"
+
+
+def _staged_upload_cleanup_age_seconds() -> int:
+    config = get_config().get("api", {})
+    age_seconds = int(
+        config.get(
+            "staged_upload_cleanup_age_seconds",
+            _DEFAULT_STAGED_UPLOAD_CLEANUP_AGE_SECONDS,
+        )
+    )
+    return max(60, age_seconds)
+
+
+def cleanup_stale_staged_uploads(*, now: float | None = None) -> int:
+    cutoff = (time.time() if now is None else now) - _staged_upload_cleanup_age_seconds()
+    removed = 0
+    for staged_path in _videos_dir().glob(".upload-*"):
+        try:
+            if not staged_path.is_file():
+                continue
+            if staged_path.stat().st_mtime > cutoff:
+                continue
+            staged_path.unlink(missing_ok=True)
+            removed += 1
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            logger.warning("Could not delete stale staged upload %s: %s", staged_path, exc)
+    return removed
+
+
+def _upload_client_key(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _reserve_upload_slot(client_key: str, max_concurrent: int) -> bool:
+    with _UPLOAD_LIMIT_LOCK:
+        active = _ACTIVE_UPLOADS_BY_CLIENT.get(client_key, 0)
+        if active >= max_concurrent:
+            return False
+        _ACTIVE_UPLOADS_BY_CLIENT[client_key] = active + 1
+    return True
+
+
+def _release_upload_slot(client_key: str) -> None:
+    with _UPLOAD_LIMIT_LOCK:
+        active = _ACTIVE_UPLOADS_BY_CLIENT.get(client_key, 0)
+        if active <= 1:
+            _ACTIVE_UPLOADS_BY_CLIENT.pop(client_key, None)
+        else:
+            _ACTIVE_UPLOADS_BY_CLIENT[client_key] = active - 1
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
 @router.post("/videos/upload", response_model=VideoUploadResponse)
-async def upload_video_endpoint(file: UploadFile = File(...)):
+def upload_video_endpoint(request: Request, file: UploadFile = File(...)):
     """Upload a video file for processing."""
     suffix = Path(file.filename or "video.mp4").suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
@@ -86,15 +187,31 @@ async def upload_video_endpoint(file: UploadFile = File(...)):
             f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
         )
 
-    tmp_dir = tempfile.mkdtemp()
-    original_name = file.filename or f"upload{suffix}"
-    tmp_path = Path(tmp_dir) / original_name
+    max_upload_bytes, max_concurrent_uploads = _upload_limits()
+    client_key = _upload_client_key(request)
+    if not _reserve_upload_slot(client_key, max_concurrent_uploads):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many uploads in progress for this client. Try again after one finishes.",
+        )
+
+    original_name = _safe_upload_name(file.filename, suffix)
+    tmp_path = _staged_upload_path(suffix)
+    upload_slot_reserved = True
     try:
         # Stream the upload in chunks instead of reading entirely into memory
+        bytes_written = 0
         with open(tmp_path, "wb") as f_out:
-            shutil.copyfileobj(file.file, f_out)
+            while chunk := file.file.read(1024 * 1024):
+                bytes_written += len(chunk)
+                if bytes_written > max_upload_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large. Maximum size is {max_upload_bytes} bytes.",
+                    )
+                f_out.write(chunk)
 
-        video = upload_video(tmp_path)
+        video = upload_video(tmp_path, original_filename=original_name, move_source=True)
         return VideoUploadResponse(
             id=video.id,
             filename=video.filename,
@@ -106,10 +223,22 @@ async def upload_video_endpoint(file: UploadFile = File(...)):
             fps=video.fps,
             frame_count=video.frame_count,
         )
-    except Exception as e:
+    except HTTPException:
+        raise
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except OSError:
+        raise HTTPException(status_code=500, detail="Server could not store the uploaded file.")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Server failed to process the uploaded file.")
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if upload_slot_reserved:
+            _release_upload_slot(client_key)
+        file.file.close()
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
 
 
 @router.get("/videos", response_model=list[VideoListItem])
@@ -150,9 +279,7 @@ def list_videos_endpoint(status: str | None = None):
 @router.get("/videos/{video_id}", response_model=VideoDetailResponse)
 def get_video_endpoint(video_id: str):
     """Get video details."""
-    video = svc_get_video(video_id)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
+    video = _require_video(video_id)
     return VideoDetailResponse(
         id=video.id,
         filename=video.filename,
@@ -176,8 +303,9 @@ def get_blur_queue(
     per_page: int = Query(100, ge=1, le=1000),
 ):
     """List blurred frames captured during extraction (list-only queue)."""
+    video = _require_video(video_id)
     frames_root = Path(get_config()["storage"]["frames_dir"])
-    video_dir = frames_root / video_id
+    video_dir = frames_root / video.id
     decisions_path = video_dir / "extraction_decisions.jsonl"
     manifest_path = video_dir / "extraction_manifest.json"
 
@@ -209,7 +337,7 @@ def get_blur_queue(
                 items.append({
                     "segment_index": row.get("segment_index"),
                     "frame_number": row.get("frame_number"),
-                    "sharpness": row.get("sharpness"),
+                    "sharpness": row.get("sharpness", row.get("selected_sharpness")),
                     "image_path": row.get("image_path"),
                     "reason": row.get("reason"),
                 })
@@ -217,7 +345,7 @@ def get_blur_queue(
 
     pages = math.ceil(total / per_page) if total else 0
     return {
-        "video_id": video_id,
+        "video_id": video.id,
         "total": total,
         "page": page,
         "per_page": per_page,

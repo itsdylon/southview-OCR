@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 
 from southview.export.exporter import export_csv, export_json, has_export_rows
-from southview.export.service import export_approved_cards_zip
+from southview.export.service import ExportIncompleteError, export_approved_cards_zip
 
 router = APIRouter(tags=["export"])
 
@@ -48,4 +48,6 @@ def export_video_approved(
             filename=zip_path.name,
         )
     except ValueError as e:
+        if isinstance(e, ExportIncompleteError):
+            raise HTTPException(status_code=409, detail=str(e))
         raise HTTPException(status_code=404, detail=str(e))

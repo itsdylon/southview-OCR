@@ -7,12 +7,13 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from southview.api.app import create_app
-from southview.auth import hash_password
+from southview.auth import get_auth_settings, hash_password, verify_login
 
 
 @contextmanager
 def make_client(tmp_config):
     auth_env = {
+        "SOUTHVIEW_ENV": "development",
         "SOUTHVIEW_AUTH_USERNAME": "admin",
         "SOUTHVIEW_AUTH_PASSWORD_HASH": hash_password("test-password"),
         "SOUTHVIEW_AUTH_SESSION_SECRET": "test-session-secret",
@@ -40,6 +41,8 @@ def test_login_sets_session_and_unlocks_api(tmp_config):
         )
         assert login_response.status_code == 200
         assert login_response.json()["authenticated"] is True
+        assert "SameSite=strict" in login_response.headers["set-cookie"]
+        assert "HttpOnly" in login_response.headers["set-cookie"]
 
         session_response = client.get("/api/auth/session")
         assert session_response.status_code == 200
@@ -58,3 +61,66 @@ def test_invalid_login_is_rejected(tmp_config):
         )
         assert response.status_code == 401
         assert "Invalid username or password" in response.json()["detail"]
+
+
+def test_verify_login_still_checks_password_for_wrong_username(tmp_config):
+    auth_env = {
+        "SOUTHVIEW_ENV": "development",
+        "SOUTHVIEW_AUTH_USERNAME": "admin",
+        "SOUTHVIEW_AUTH_PASSWORD_HASH": hash_password("test-password"),
+        "SOUTHVIEW_AUTH_SESSION_SECRET": "test-session-secret",
+    }
+
+    with patch.dict(os.environ, auth_env, clear=False), \
+         patch("southview.auth.verify_password", return_value=True) as verify_password_mock:
+        assert verify_login("wrong-user", "test-password") is False
+
+    verify_password_mock.assert_called_once()
+
+
+def test_secure_cookies_default_to_true_outside_development():
+    with patch("southview.auth._load_env_file"), patch.dict(
+        os.environ,
+        {
+            "SOUTHVIEW_ENV": "production",
+            "SOUTHVIEW_AUTH_SECURE_COOKIES": "false",
+        },
+        clear=True,
+    ):
+        assert get_auth_settings().secure_cookies is True
+
+
+def test_secure_cookies_can_be_disabled_in_development():
+    with patch("southview.auth._load_env_file"), patch.dict(
+        os.environ,
+        {
+            "SOUTHVIEW_ENV": "development",
+            "SOUTHVIEW_AUTH_SECURE_COOKIES": "false",
+        },
+        clear=True,
+    ):
+        assert get_auth_settings().secure_cookies is False
+
+
+def test_login_rate_limits_after_repeated_failures(tmp_config, monkeypatch):
+    now = {"value": 1_000.0}
+
+    monkeypatch.setattr("southview.api.routes.auth._FAILED_LOGIN_ATTEMPTS", {})
+    monkeypatch.setattr("southview.api.routes.auth._LOGIN_LOCKOUTS", {})
+    monkeypatch.setattr("southview.api.routes.auth.time.time", lambda: now["value"])
+
+    with make_client(tmp_config) as client:
+        for _ in range(5):
+            response = client.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "wrong-password"},
+            )
+            assert response.status_code == 401
+
+        limited = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "wrong-password"},
+        )
+
+    assert limited.status_code == 429
+    assert "Too many login attempts" in limited.json()["detail"]

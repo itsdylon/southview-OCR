@@ -17,6 +17,7 @@ def client(tmp_path, tmp_db, tmp_config):
     """TestClient wired to a temp database and storage directories."""
     config = tmp_config
     auth_env = {
+        "SOUTHVIEW_ENV": "development",
         "SOUTHVIEW_AUTH_USERNAME": "admin",
         "SOUTHVIEW_AUTH_PASSWORD_HASH": hash_password("test-password"),
         "SOUTHVIEW_AUTH_SESSION_SECRET": "test-session-secret",
@@ -79,6 +80,114 @@ class TestUploadEndpoint:
         assert resp.status_code == 400
         assert "Unsupported file extension" in resp.json()["detail"]
 
+    def test_upload_strips_path_components_from_filename(self, client, tiny_mp4, monkeypatch, tmp_path):
+        """Upload staging stays under the configured storage area even with traversal names."""
+        staged_upload = tmp_path / ".upload-stage.mp4"
+        leaked_path = tmp_path / "escape.mp4"
+
+        monkeypatch.setattr("southview.api.routes.videos._staged_upload_path", lambda _suffix: staged_upload)
+
+        with open(tiny_mp4, "rb") as f:
+            resp = client.post(
+                "/api/videos/upload",
+                files={"file": ("../escape.mp4", f, "video/mp4")},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["filename"] == "escape.mp4"
+        assert not leaked_path.exists()
+        assert not staged_upload.exists()
+
+    def test_upload_rejects_files_over_size_limit(self, client, tiny_mp4, monkeypatch, tmp_config):
+        limited_config = {
+            **tmp_config,
+            "api": {"max_upload_bytes": 4},
+        }
+        monkeypatch.setattr("southview.api.routes.videos.get_config", lambda: limited_config)
+
+        with open(tiny_mp4, "rb") as f:
+            resp = client.post(
+                "/api/videos/upload",
+                files={"file": ("test.mp4", f, "video/mp4")},
+            )
+
+        assert resp.status_code == 413
+        assert "File too large" in resp.json()["detail"]
+
+    def test_upload_rejects_when_client_has_too_many_active_uploads(
+        self,
+        client,
+        tiny_mp4,
+        monkeypatch,
+        tmp_config,
+    ):
+        limited_config = {
+            **tmp_config,
+            "api": {"max_concurrent_uploads_per_client": 2},
+        }
+        monkeypatch.setattr("southview.api.routes.videos.get_config", lambda: limited_config)
+        monkeypatch.setattr("southview.api.routes.videos._upload_client_key", lambda _request: "test-client")
+        monkeypatch.setattr(
+            "southview.api.routes.videos._ACTIVE_UPLOADS_BY_CLIENT",
+            {"test-client": 2},
+        )
+
+        with open(tiny_mp4, "rb") as f:
+            resp = client.post(
+                "/api/videos/upload",
+                files={"file": ("test.mp4", f, "video/mp4")},
+            )
+
+        assert resp.status_code == 429
+        assert "Too many uploads in progress" in resp.json()["detail"]
+
+    def test_upload_returns_500_for_storage_errors(self, client, tiny_mp4, monkeypatch):
+        monkeypatch.setattr(
+            "southview.api.routes.videos.upload_video",
+            lambda _path, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+        )
+
+        with open(tiny_mp4, "rb") as f:
+            resp = client.post(
+                "/api/videos/upload",
+                files={"file": ("test.mp4", f, "video/mp4")},
+            )
+
+        assert resp.status_code == 500
+        assert resp.json()["detail"] == "Server could not store the uploaded file."
+
+    def test_cleanup_stale_staged_uploads_removes_only_old_staging_files(self, tmp_config, monkeypatch):
+        from southview.api.routes import videos as video_routes
+
+        videos_dir = Path(tmp_config["storage"]["videos_dir"])
+        videos_dir.mkdir(parents=True, exist_ok=True)
+        stale_upload = videos_dir / ".upload-stale.mp4"
+        fresh_upload = videos_dir / ".upload-fresh.mp4"
+        real_video = videos_dir / "real-video.mp4"
+        stale_upload.write_bytes(b"stale")
+        fresh_upload.write_bytes(b"fresh")
+        real_video.write_bytes(b"real")
+
+        now = 1_000_000.0
+        os.utime(stale_upload, (now - 120, now - 120))
+        os.utime(fresh_upload, (now - 10, now - 10))
+
+        monkeypatch.setattr(
+            video_routes,
+            "get_config",
+            lambda: {
+                **tmp_config,
+                "api": {"staged_upload_cleanup_age_seconds": 60},
+            },
+        )
+
+        removed = video_routes.cleanup_stale_staged_uploads(now=now)
+
+        assert removed == 1
+        assert not stale_upload.exists()
+        assert fresh_upload.exists()
+        assert real_video.exists()
+
 
 class TestListEndpoint:
     def test_list_empty(self, client):
@@ -123,13 +232,23 @@ class TestGetEndpoint:
 
 
 class TestBlurQueueEndpoint:
-    def test_blur_queue_404_when_missing(self, client, tmp_config):
-        with patch("southview.api.routes.videos.get_config", return_value=tmp_config):
-            resp = client.get("/api/videos/no-manifest/blur-queue")
+    def test_blur_queue_404_when_video_missing(self, client, tmp_config, monkeypatch):
+        def fail_if_called():
+            raise AssertionError("filesystem config should not be read for unknown videos")
+
+        monkeypatch.setattr("southview.api.routes.videos.get_config", fail_if_called)
+        resp = client.get("/api/videos/no-manifest/blur-queue")
         assert resp.status_code == 404
 
-    def test_blur_queue_returns_paginated_items(self, client, tmp_config):
-        video_id = "video-123"
+    def test_blur_queue_returns_paginated_items(self, client, tiny_mp4, tmp_config):
+        with open(tiny_mp4, "rb") as f:
+            upload_resp = client.post(
+                "/api/videos/upload",
+                files={"file": ("test.mp4", f, "video/mp4")},
+            )
+
+        assert upload_resp.status_code == 200
+        video_id = upload_resp.json()["id"]
         frames_root = Path(tmp_config["storage"]["frames_dir"])
         video_dir = frames_root / video_id
         video_dir.mkdir(parents=True, exist_ok=True)
@@ -200,3 +319,11 @@ class TestBlurQueueEndpoint:
         body2 = resp2.json()
         assert len(body2["items"]) == 1
         assert body2["items"][0]["frame_number"] == 5
+
+    def test_blur_queue_rejects_parent_directory_ids_before_filesystem_access(self, client, monkeypatch):
+        def fail_if_called():
+            raise AssertionError("filesystem config should not be read for invalid IDs")
+
+        monkeypatch.setattr("southview.api.routes.videos.get_config", fail_if_called)
+        resp = client.get("/api/videos/%2e%2e/blur-queue")
+        assert resp.status_code == 404

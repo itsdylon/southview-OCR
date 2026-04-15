@@ -17,15 +17,18 @@ import {
 import * as Accordion from '@radix-ui/react-accordion';
 import { DashboardLayout } from '../layouts/dashboard-layout';
 import { ConfidenceBadge } from '../components/confidence-badge';
-import { useCardStore } from '../data/mock-db';
+import * as api from '../data/api';
+import { useMockDb } from '../data/mock-db';
 import { getConfidenceBand } from '../types/ocr';
-import type { OCRResult } from '../types/ocr';
+import type { CardWithOCR, OCRResult } from '../types/ocr';
 
 export default function OCRReviewVerifyPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { cards, updateCardFields, updateCardStatus, deleteCard } = useCardStore();
+  const { cards, mergeCards, updateCardFields, updateCardStatus, deleteCard } = useMockDb();
   const card = cards.find((c) => c.id === id);
+  const [loadingCard, setLoadingCard] = useState(false);
+  const [cardError, setCardError] = useState<string | null>(null);
 
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(card?.ocrResult?.rotationDegrees || 0);
@@ -61,6 +64,31 @@ export default function OCRReviewVerifyPage() {
     setShowRawOCR(false);
   }, [id, cards]);
 
+  useEffect(() => {
+    if (!id || card) return;
+
+    let cancelled = false;
+    setLoadingCard(true);
+    setCardError(null);
+
+    api.fetchCard(id)
+      .then((fetchedCard: CardWithOCR) => {
+        if (cancelled) return;
+        mergeCards([fetchedCard]);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setCardError(error instanceof Error ? error.message : 'Failed to load card.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCard(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [card, id, mergeCards]);
+
   // Build a filtered list of cards that still need review (flagged or pending)
   const reviewQueue = cards.filter(
     (c) => c.ocrResult && (c.ocrResult.reviewStatus === 'flagged' || c.ocrResult.reviewStatus === 'pending')
@@ -70,7 +98,9 @@ export default function OCRReviewVerifyPage() {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-full">
-          <p className="text-gray-500">Card not found</p>
+          <p className="text-gray-500">
+            {loadingCard ? 'Loading card…' : cardError || 'Card not found'}
+          </p>
         </div>
       </DashboardLayout>
     );

@@ -114,6 +114,7 @@ interface RawCard {
   confidence_score: number;
   rotation_degrees?: number | null;
   review_status: string;
+  review_version?: number | null;
   // structured fields (snake_case — matches frontend type)
   deceased_name: string | null;
   address: string | null;
@@ -145,6 +146,7 @@ interface RawCardDetail {
     confidence_score: number;
     word_confidences: string;
     review_status: string;
+    review_version?: number | null;
     reviewed_by: string | null;
     reviewed_at: string | null;
     raw_fields_json: string | null;
@@ -222,6 +224,7 @@ function mapCardFromList(c: RawCard): CardWithOCR {
       rawText: c.raw_text,
       rawFieldsJson: c.raw_fields_json ?? '',
       rotationDegrees: c.rotation_degrees ?? 0,
+      reviewVersion: c.review_version ?? 0,
       deceased_name: c.deceased_name,
       address: c.address,
       owner: c.owner,
@@ -259,6 +262,7 @@ function mapCardFromDetail(d: RawCardDetail): CardWithOCR {
       rawText: ocr?.raw_text ?? '',
       rawFieldsJson: ocr?.raw_fields_json ?? '',
       rotationDegrees: ocr?.rotation_degrees ?? 0,
+      reviewVersion: ocr?.review_version ?? 0,
       wordConfidences: ocr?.word_confidences ? JSON.parse(ocr.word_confidences) : undefined,
       deceased_name: ocr?.deceased_name ?? null,
       address: ocr?.address ?? null,
@@ -428,12 +432,22 @@ export async function retryJob(jobId: string): Promise<Job> {
 export async function fetchCards(params?: {
   videoId?: string;
   status?: string;
+  statusIn?: string;
+  q?: string;
+  sort?: 'confidence' | 'sequence_index';
+  minConfidence?: number;
+  maxConfidence?: number;
   page?: number;
   perPage?: number;
 }): Promise<{ cards: CardWithOCR[]; total: number; page: number; pages: number }> {
   const searchParams = new URLSearchParams();
   if (params?.videoId) searchParams.set('video_id', params.videoId);
   if (params?.status) searchParams.set('status', params.status);
+  if (params?.statusIn) searchParams.set('status_in', params.statusIn);
+  if (params?.q) searchParams.set('q', params.q);
+  if (params?.sort) searchParams.set('sort', params.sort);
+  if (params?.minConfidence !== undefined) searchParams.set('min_confidence', String(params.minConfidence));
+  if (params?.maxConfidence !== undefined) searchParams.set('max_confidence', String(params.maxConfidence));
   if (params?.page) searchParams.set('page', String(params.page));
   if (params?.perPage) searchParams.set('per_page', String(params.perPage));
 
@@ -460,9 +474,10 @@ export async function submitReview(
   cardId: string,
   fields: Partial<OCRResult>,
   status: ReviewStatus,
+  reviewVersion: number,
 ): Promise<void> {
   // Build the request body with structured fields
-  const body: Record<string, unknown> = { status };
+  const body: Record<string, unknown> = { status, review_version: reviewVersion };
 
   // Map structured fields directly (they're already snake_case)
   const structuredFields = [

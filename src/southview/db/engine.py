@@ -35,6 +35,7 @@ def init_db(db_path: str | Path) -> Engine:
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL;")
         cur.execute("PRAGMA foreign_keys=ON;")
+        cur.execute("PRAGMA busy_timeout=5000;")
         cur.close()
 
     _ENGINE = engine
@@ -48,6 +49,7 @@ def init_db(db_path: str | Path) -> Engine:
     _migrate_filepath_nullable(engine)
     # migrations: add newly supported structured OCR columns
     _migrate_ocr_results_structured_columns(engine)
+    _ensure_indexes(engine)
 
     return _ENGINE
 
@@ -115,6 +117,7 @@ def _migrate_ocr_results_structured_columns(engine: Engine) -> None:
         "board_of_health_no": "VARCHAR",
         "svc_no": "VARCHAR",
         "rotation_degrees": "INTEGER",
+        "review_version": "INTEGER NOT NULL DEFAULT 0",
     }
 
     with engine.connect() as conn:
@@ -134,6 +137,13 @@ def _migrate_ocr_results_structured_columns(engine: Engine) -> None:
             changed = True
         if changed:
             conn.commit()
+
+
+def _ensure_indexes(engine: Engine) -> None:
+    with engine.connect() as conn:
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_jobs_status ON jobs(status)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_cards_video_id ON cards(video_id)")
+        conn.commit()
 
 
 def get_engine() -> Engine:

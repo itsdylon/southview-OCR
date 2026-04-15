@@ -51,8 +51,9 @@ def _validate_extension(file_path: Path) -> None:
         )
 
 
-def _stored_video_path(existing: Video, source_file: Path, dest_dir: Path) -> Path:
+def _stored_video_path(existing: Video, source_file: str | Path, dest_dir: Path) -> Path:
     """Compute canonical on-disk path for an existing deduplicated video row."""
+    source_file = Path(source_file)
     current_path = Path(existing.filepath) if existing.filepath else None
     if current_path and current_path.suffix:
         suffix = current_path.suffix
@@ -61,17 +62,30 @@ def _stored_video_path(existing: Video, source_file: Path, dest_dir: Path) -> Pa
     return dest_dir / f"{existing.id}{suffix}"
 
 
-def upload_video(file_path: str | Path) -> Video:
+def _store_video_file(source_path: Path, dest_path: Path, *, move_source: bool) -> None:
+    if move_source:
+        source_path.replace(dest_path)
+    else:
+        shutil.copy2(source_path, dest_path)
+
+
+def upload_video(
+    file_path: str | Path,
+    *,
+    original_filename: str | None = None,
+    move_source: bool = False,
+) -> Video:
     """
     Ingest a video file: compute hash, check for duplicates, store, and create DB record.
 
     Returns existing Video if the file was already uploaded (idempotent).
     """
     file_path = Path(file_path)
+    display_name = original_filename or file_path.name
     if not file_path.exists():
         raise FileNotFoundError(f"Video file not found: {file_path}")
 
-    _validate_extension(file_path)
+    _validate_extension(Path(display_name))
 
     file_hash = compute_file_hash(file_path)
 
@@ -92,8 +106,8 @@ def upload_video(file_path: str | Path) -> Video:
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 _check_disk_space(dest_dir, file_path.stat().st_size)
 
-                restored_path = _stored_video_path(existing, file_path, dest_dir)
-                shutil.copy2(file_path, restored_path)
+                restored_path = _stored_video_path(existing, display_name, dest_dir)
+                _store_video_file(file_path, restored_path, move_source=move_source)
                 existing.filepath = str(restored_path)
                 session.commit()
 
@@ -109,7 +123,7 @@ def upload_video(file_path: str | Path) -> Video:
         _check_disk_space(dest_dir, file_size)
 
         video = Video(
-            filename=file_path.name,
+            filename=Path(display_name).name,
             filepath="",  # will be set after copy
             file_hash=file_hash,
             status="uploaded",
@@ -123,8 +137,9 @@ def upload_video(file_path: str | Path) -> Video:
         session.add(video)
         session.flush()  # get the generated ID
 
-        dest_path = dest_dir / f"{video.id}{file_path.suffix}"
-        shutil.copy2(file_path, dest_path)
+        dest_suffix = Path(display_name).suffix or file_path.suffix
+        dest_path = dest_dir / f"{video.id}{dest_suffix}"
+        _store_video_file(file_path, dest_path, move_source=move_source)
 
         video.filepath = str(dest_path)
         session.commit()
